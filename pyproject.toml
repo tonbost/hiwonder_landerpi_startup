@@ -1,0 +1,14 @@
+[project]
+name = "landerpi-setup"
+version = "0.1.0"
+description = "Setup script for Hiwonder LanderPi on Raspberry Pi 5"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "fabric>=3.2.0",
+]
+
+[project.scripts]
+landerpi-setup = "setup_landerpi:app"

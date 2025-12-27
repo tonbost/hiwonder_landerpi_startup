@@ -1,0 +1,118 @@
+# Sensitive configuration files
+.env
+config.json
+.mcp.json
+
+# macOS
+.DS_Store
+
+# Generated archives
+*.zip
+
+# Scan results (IP-specific)
+remote_scan_*/
+
+# Claude Code - exclude all except landerpi-support skill
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/landerpi-support/
+
+# Utility scripts not needed for core functionality
+extract_pdf*.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# uv
+.python-version
+uv.lock
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# Ruff
+.ruff_cache/
+
+
+adws/
+
+deep_docs/
+deep_specs/
+
+./agents/
+
+logs/
+
+# Git worktrees
+.worktrees/
