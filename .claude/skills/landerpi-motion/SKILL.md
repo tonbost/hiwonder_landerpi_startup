@@ -1,0 +1,168 @@
+---
+name: landerpi-motion
+description: Chassis motion control for HiWonder LanderPi robot. Provides motor mapping, direction control, speed parameters, and motion testing. Requires landerpi-core skill to be loaded first for connection and SDK setup.
+---
+
+# LanderPi Motion Control
+
+## Overview
+
+Motion control skill for HiWonder LanderPi Mecanum chassis. Provides direct serial control via SDK and ROS2-based control via Docker.
+
+**Prerequisite:** Load `landerpi-core` skill first for connection configuration and SDK setup.
+
+## Motion Commands
+
+| Command | Purpose |
+|---------|---------|
+| `uv run python test_chassis_direct.py test --direction all --duration 2 --yes` | Test all 6 directions |
+| `uv run python test_chassis_direct.py test --duration 3 --yes` | Test forward/backward only |
+| `uv run python test_chassis_direct.py motor-test` | Test individual motors |
+| `uv run python test_chassis_direct.py stop` | Emergency stop |
+| `uv run python test_chassis_direct.py status` | Get battery/IMU status |
+
+## Safety Protocol
+
+**CRITICAL: The robot WILL MOVE when motion commands are executed.**
+
+1. Ensure clear area around robot (1m radius minimum)
+2. Always verify connection before motion commands
+3. Keep test durations short (2-5 seconds)
+4. Know emergency stop: `test_chassis_direct.py stop`
+5. Only use `--yes` flag when user explicitly approves motion
+
+## Motor Mapping (Mecanum Chassis)
+
+```
+Front
+┌─────────────────┐
+│  M1(FL)  M3(FR) │
+│                 │
+│  M2(BL)  M4(BR) │
+└─────────────────┘
+Back
+```
+
+- **M1** = Front-Left
+- **M2** = Back-Left
+- **M3** = Front-Right
+- **M4** = Back-Right
+
+## Direction Control
+
+Speed: 0.3 m/s (maximum safe speed)
+
+| Direction | M1 (FL) | M2 (BL) | M3 (FR) | M4 (BR) | Description |
+|-----------|---------|---------|---------|---------|-------------|
+| Forward | -0.3 | -0.3 | +0.3 | +0.3 | Left negative, right positive |
+| Backward | +0.3 | +0.3 | -0.3 | -0.3 | Opposite of forward |
+| Turn Right | -0.3 | -0.3 | -0.3 | -0.3 | All negative (CW rotation) |
+| Turn Left | +0.3 | +0.3 | +0.3 | +0.3 | All positive (CCW rotation) |
+| Strafe Right | -0.3 | +0.3 | -0.3 | +0.3 | Diagonal pattern |
+| Strafe Left | +0.3 | -0.3 | +0.3 | -0.3 | Opposite diagonal |
+
+## Direct Serial Control (SDK)
+
+```python
+from ros_robot_controller_sdk import Board
+
+board = Board()  # Opens /dev/ttyACM0 at 1000000 baud
+board.enable_reception()
+
+# Move FORWARD at 0.3 m/s
+board.set_motor_speed([[1, -0.3], [2, -0.3], [3, 0.3], [4, 0.3]])
+
+# Move BACKWARD
+board.set_motor_speed([[1, 0.3], [2, 0.3], [3, -0.3], [4, -0.3]])
+
+# TURN RIGHT (clockwise)
+board.set_motor_speed([[1, -0.3], [2, -0.3], [3, -0.3], [4, -0.3]])
+
+# TURN LEFT (counter-clockwise)
+board.set_motor_speed([[1, 0.3], [2, 0.3], [3, 0.3], [4, 0.3]])
+
+# STRAFE RIGHT
+board.set_motor_speed([[1, -0.3], [2, 0.3], [3, -0.3], [4, 0.3]])
+
+# STRAFE LEFT
+board.set_motor_speed([[1, 0.3], [2, -0.3], [3, 0.3], [4, -0.3]])
+
+# STOP all motors
+board.set_motor_speed([[1, 0], [2, 0], [3, 0], [4, 0]])
+```
+
+## ROS2 Control (via Docker)
+
+For ROS2-based control (requires full HiWonder stack):
+
+```bash
+docker run --rm --privileged --network host -v /dev:/dev landerpi-ros2:latest \
+    bash -c 'source /opt/ros/humble/setup.bash && \
+    ros2 topic pub --once /ros_robot_controller/cmd_vel geometry_msgs/msg/Twist \
+    "{linear: {x: 0.15, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"'
+```
+
+**Twist message mapping:**
+- `linear.x > 0`: Forward
+- `linear.x < 0`: Backward
+- `linear.y > 0`: Strafe left (Mecanum only)
+- `linear.y < 0`: Strafe right (Mecanum only)
+- `angular.z > 0`: Turn left (CCW)
+- `angular.z < 0`: Turn right (CW)
+
+## Motion Parameters
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Max speed | 0.3 m/s | Direct serial control |
+| ROS2 speed | 0.15 m/s | Conservative for safety |
+| Test duration | 2-3 sec | Recommended for testing |
+| Serial baud | 1000000 | STM32 communication |
+| Serial port | /dev/ttyACM0 | Motor controller |
+
+## Troubleshooting
+
+### Problem: Motors don't respond
+
+**Symptoms:**
+- Commands execute but robot doesn't move
+- No error messages
+
+**Diagnosis:**
+```bash
+# Check serial port exists
+ls /dev/ttyACM*
+
+# Check battery voltage
+uv run python test_chassis_direct.py status
+```
+
+**Solutions:**
+1. Check battery level (should be >10V)
+2. Verify serial port permissions
+3. Check motor controller power switch
+
+### Problem: Robot moves in wrong direction
+
+**Symptoms:**
+- Forward command moves backward
+- Turning is reversed
+
+**Solution:**
+Motor wiring may be swapped. Use motor-test to identify:
+```bash
+uv run python test_chassis_direct.py motor-test --motor 1
+```
+
+Test each motor individually and verify physical position matches expected.
+
+### Problem: Uneven movement
+
+**Symptoms:**
+- Robot drifts left or right during forward motion
+- Turns are asymmetric
+
+**Solution:**
+1. Check wheel tightness
+2. Verify floor surface is level
+3. Calibrate motor speeds if needed

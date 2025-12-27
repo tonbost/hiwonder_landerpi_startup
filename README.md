@@ -126,14 +126,70 @@ uv run python test_chassis_motion.py stop --host <PI_IP> --user <USERNAME> --pas
   ros2 launch ros_robot_controller ros_robot_controller.launch.py
   ```
 
-### 3. Test Connection (Optional)
+### 3. Lidar Test (Docker-based ROS2)
+Test MS200/LD19 lidar connectivity and functionality. ROS2 runs inside Docker containers.
+
+```bash
+# Check lidar device, Docker, and ROS2 availability
+uv run python test_lidar.py check
+
+# Start lidar driver in Docker container (publishes to /scan topic)
+uv run python test_lidar.py start-driver
+
+# Read lidar scan data and display statistics
+uv run python test_lidar.py scan --samples 5
+
+# Stop the lidar driver container
+uv run python test_lidar.py stop-driver
+
+# Stop all lidar functionality
+uv run python test_lidar.py stop
+```
+
+**Check Output Example:**
+```
+Summary:
+  Docker: PASS
+  Lidar Device: PASS
+  ROS2 in Docker: PASS
+  Scan Topic: WARN (start driver first)
+```
+
+**Lidar Modes (Requires HiWonder ROS2 Workspace):**
+If the full HiWonder ROS2 workspace is installed, additional modes are available:
+```bash
+# Obstacle avoidance - robot turns to avoid obstacles
+uv run python test_lidar.py test --mode 1 --duration 10 --yes
+
+# Tracking - robot follows objects at 35cm distance
+uv run python test_lidar.py test --mode 2 --duration 10 --yes
+
+# Guard - robot rotates to face detected objects
+uv run python test_lidar.py test --mode 3 --duration 10 --yes
+```
+
+**Lidar Configuration:**
+| Property | Value |
+|----------|-------|
+| Device | `/dev/ldlidar` or `/dev/ttyUSB0` |
+| Baud Rate | 230400 |
+| ROS2 Topic | `/scan` |
+| Docker Image | `landerpi-ros2:latest` or `ros:humble-ros-base` |
+
+**Note:** ROS2 is NOT installed natively on the robot. All ROS2 commands run inside Docker containers with the pattern:
+```bash
+docker run --rm --privileged --network host -v /dev:/dev <IMAGE> \
+    bash -c 'source /opt/ros/humble/setup.bash && <ROS2_COMMAND>'
+```
+
+### 4. Test Connection (Optional)
 Verify SSH connectivity only:
 ```bash
 uv run python setup_landerpi.py connect --host <PI_IP> --user <USERNAME> --password <PASSWORD>
 ```
 *Tip: If you use SSH keys, you can omit the password.*
 
-### 4. Run Setup (with Resume capability)
+### 5. Run Setup (with Resume capability)
 The script tracks progress on the remote Pi in `~/.landerpi_setup_state.json`. If it fails or disconnects, simply run the **exact same command** again. It will detect completed steps and skip them.
 
 ```bash
@@ -161,13 +217,16 @@ uv run python setup_landerpi.py deploy --host 192.168.1.100 --user pi
 
 ## Supported Peripherals
 After setup, the following peripherals will be accessible:
+- **Lidar** (MS200/LD19): `/dev/ldlidar` or `/dev/ttyUSB0` - 230400 baud, tested via `test_lidar.py`
 - **Depth Camera** (Aurora 930): USB device (VID:PID 3251:1930) - Fully configured with ROS2 driver
+- **Motor Controller** (STM32): `/dev/ttyACM0` - Direct serial communication via SDK
 - **Serial Controllers** (CH340): `/dev/ttyUSB0`, `/dev/ttyUSB1`
 - **USB Audio** (Speaker): Detected via PipeWire/ALSA
 - **I2C Devices**: `/dev/i2c-1`
 - **SPI Devices**: `/dev/spidev0.0`, `/dev/spidev0.1`
 - **GPIO**: `/dev/gpiochip0`
 - **Temperature**: `vcgencmd measure_temp`
+- **Docker**: ROS2 runs inside `landerpi-ros2` or `ros:humble-ros-base` containers
 
 ## Aurora 930 Depth Camera Setup
 

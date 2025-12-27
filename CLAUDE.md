@@ -51,6 +51,26 @@ uv run python test_chassis_direct.py stop
 
 # Get robot status (battery, serial port)
 uv run python test_chassis_direct.py status
+
+# Test lidar - check device, Docker, and ROS2 connectivity
+uv run python test_lidar.py check
+
+# Start lidar driver in Docker container
+uv run python test_lidar.py start-driver
+
+# Read lidar scan data (requires driver running)
+uv run python test_lidar.py scan --samples 5
+
+# Stop lidar driver container
+uv run python test_lidar.py stop-driver
+
+# Test lidar modes (robot will MOVE! requires HiWonder ROS2 workspace)
+uv run python test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
+uv run python test_lidar.py test --mode 2 --duration 10 --yes  # Tracking (35cm following)
+uv run python test_lidar.py test --mode 3 --duration 10 --yes  # Guard (face objects)
+
+# Stop all lidar functionality
+uv run python test_lidar.py stop
 ```
 
 ## Architecture
@@ -79,6 +99,20 @@ uv run python test_chassis_direct.py status
 - Requires HiWonder system image with ros_robot_controller installed
 - Uses `/ros_robot_controller/cmd_vel` topic with `geometry_msgs/msg/Twist`
 - Commands: `test` (move robot), `stop` (emergency stop)
+
+**`test_lidar.py`** - Lidar validation test (Docker-based ROS2)
+- Tests MS200/LD19 lidar connectivity and functionality via Docker
+- ROS2 runs inside Docker container (`ros:humble-ros-base` or `landerpi-ros2:latest`)
+- Reads credentials from `config.json` automatically
+- Lidar device: `/dev/ldlidar` or `/dev/ttyUSB0` (baud: 230400)
+- ROS2 topic: `/scan`
+- Commands:
+  - `check` - Verify device, Docker, ROS2 availability
+  - `start-driver` - Start lidar driver in Docker container
+  - `scan` - Read scan data and display statistics
+  - `stop-driver` - Stop lidar driver container
+  - `test` - Test lidar modes (requires HiWonder ROS2 workspace)
+  - `stop` - Stop all lidar functionality
 
 **Deployment Steps** (in order):
 1. `system_update` - apt update/upgrade, install base tools

@@ -12,11 +12,16 @@ config.json
 # Scan results (IP-specific)
 remote_scan_*/
 
-# Claude Code - exclude all except landerpi-support skill
+# Claude Code - include LanderPi agent and skills
 .claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/landerpi-robot.md
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/landerpi-support/
+!.claude/skills/landerpi-core/
+!.claude/skills/landerpi-motion/
+!.claude/skills/landerpi-lidar/
 
 # Utility scripts not needed for core functionality
 extract_pdf*.py
