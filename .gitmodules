@@ -1,0 +1,3 @@
+[submodule "reference/LanderPi"]
+	path = reference/LanderPi
+	url = git@github.com:tonbost/LanderPi.git
