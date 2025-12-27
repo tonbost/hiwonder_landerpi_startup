@@ -19,7 +19,7 @@ This guide explains how to use the `landerpi-setup` tool to remotely provision a
 
 1. **Install Dependencies**:
    ```bash
-   cd /Users/ZDZ/Documents/gitrepo/personalproject/hiwonderSetup
+   cd hiwonderSetup
    uv sync
    # Or with pip: pip install -r requirements.txt
    ```
