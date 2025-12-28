@@ -182,14 +182,76 @@ docker run --rm --privileged --network host -v /dev:/dev <IMAGE> \
     bash -c 'source /opt/ros/humble/setup.bash && <ROS2_COMMAND>'
 ```
 
-### 4. Test Connection (Optional)
+### 4. Robotic Arm Test (Direct Serial - No ROS2 Required)
+Test the 5-DOF robotic arm and gripper using direct serial communication:
+
+```bash
+# Full arm test (home position + gripper + arm movements)
+uv run python test_arm.py test --yes
+
+# Get servo status (positions, voltages, temperatures)
+uv run python test_arm.py status
+
+# Move arm to home position (all servos at 500)
+uv run python test_arm.py home --yes
+
+# Test individual servo
+uv run python test_arm.py servo-test --servo 1 --yes
+
+# Test all servos sequentially
+uv run python test_arm.py servo-test --yes
+
+# Emergency stop (disable all servo torque)
+uv run python test_arm.py stop
+```
+
+**Servo Configuration:**
+| Servo ID | Function | Position Range |
+|----------|----------|----------------|
+| 1 | Base rotation (Joint 1) | 0-1000 |
+| 2 | Shoulder (Joint 2) | 0-1000 |
+| 3 | Elbow (Joint 3) | 0-1000 |
+| 4 | Wrist pitch (Joint 4) | 0-1000 |
+| 5 | Wrist roll (Joint 5) | 0-1000 |
+| 10 | Gripper | 0-1000 (200=open, 700=closed) |
+
+**Options:**
+- `--duration`: Movement duration in seconds (default: 2.0)
+- `--servo`: Test specific servo (1-5 for arm, 10 for gripper)
+- `-y, --yes`: Skip approval prompt
+
+**Safety Features:**
+- Requires user approval before moving
+- Audio feedback (buzzer) during operations
+- Emergency stop command available
+- Torque disable on stop
+
+**Status Output Example:**
+```
+┌──────────────────────────────────────────────────────────┐
+│                    Arm Servo Status                       │
+├──────────┬─────────┬──────────┬─────────┬───────────────┤
+│ Servo ID │  Type   │ Position │ Voltage │  Temperature  │
+├──────────┼─────────┼──────────┼─────────┼───────────────┤
+│    1     │ Joint 1 │   500    │  8.0V   │     24C       │
+│    2     │ Joint 2 │   500    │  7.9V   │     23C       │
+│    3     │ Joint 3 │   500    │  8.0V   │     24C       │
+│    4     │ Joint 4 │   500    │  7.9V   │     25C       │
+│    5     │ Joint 5 │   500    │  8.0V   │     22C       │
+│   10     │ Gripper │   500    │  8.0V   │     24C       │
+└──────────┴─────────┴──────────┴─────────┴───────────────┘
+```
+
+**Note:** Uses `ros_robot_controller_sdk.py` for direct STM32 communication. No ROS2 required.
+
+### 5. Test Connection (Optional)
 Verify SSH connectivity only:
 ```bash
 uv run python setup_landerpi.py connect --host <PI_IP> --user <USERNAME> --password <PASSWORD>
 ```
 *Tip: If you use SSH keys, you can omit the password.*
 
-### 5. Run Setup (with Resume capability)
+### 6. Run Setup (with Resume capability)
 The script tracks progress on the remote Pi in `~/.landerpi_setup_state.json`. If it fails or disconnects, simply run the **exact same command** again. It will detect completed steps and skip them.
 
 ```bash
@@ -220,6 +282,7 @@ After setup, the following peripherals will be accessible:
 - **Lidar** (MS200/LD19): `/dev/ldlidar` or `/dev/ttyUSB0` - 230400 baud, tested via `test_lidar.py`
 - **Depth Camera** (Aurora 930): USB device (VID:PID 3251:1930) - Fully configured with ROS2 driver
 - **Motor Controller** (STM32): `/dev/ttyACM0` - Direct serial communication via SDK
+- **Robotic Arm** (5-DOF + Gripper): Servo IDs 1-5 (arm) + 10 (gripper), tested via `test_arm.py`
 - **Serial Controllers** (CH340): `/dev/ttyUSB0`, `/dev/ttyUSB1`
 - **USB Audio** (Speaker): Detected via PipeWire/ALSA
 - **I2C Devices**: `/dev/i2c-1`

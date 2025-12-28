@@ -22,9 +22,15 @@ remote_scan_*/
 !.claude/skills/landerpi-core/
 !.claude/skills/landerpi-motion/
 !.claude/skills/landerpi-lidar/
+!.claude/skills/landerpi-arm/
+!.claude/skills/landerpi-camera/
 
 # Utility scripts not needed for core functionality
 extract_pdf*.py
+analyze_ros2_driver.py
+
+# Temporary extraction directories
+temp_ros2_driver/
 
 # Python
 __pycache__/

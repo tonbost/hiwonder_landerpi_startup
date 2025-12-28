@@ -71,6 +71,23 @@ uv run python test_lidar.py test --mode 3 --duration 10 --yes  # Guard (face obj
 
 # Stop all lidar functionality
 uv run python test_lidar.py stop
+
+# Test robotic arm - DIRECT (no ROS2 needed, uses config.json)
+uv run python test_arm.py test --yes  # Full arm test (positions + gripper)
+uv run python test_arm.py test --duration 3 --yes  # Custom movement duration
+
+# Get arm servo status (positions, voltages, temperatures)
+uv run python test_arm.py status
+
+# Move arm to home position (all servos at 500)
+uv run python test_arm.py home --yes
+
+# Test individual servos
+uv run python test_arm.py servo-test --servo 1 --yes  # Test servo 1
+uv run python test_arm.py servo-test --yes  # Test all servos (1-5, 10)
+
+# Emergency stop (disable all arm servos)
+uv run python test_arm.py stop
 ```
 
 ## Architecture
@@ -113,6 +130,18 @@ uv run python test_lidar.py stop
   - `stop-driver` - Stop lidar driver container
   - `test` - Test lidar modes (requires HiWonder ROS2 workspace)
   - `stop` - Stop all lidar functionality
+
+**`test_arm.py`** - Robotic arm test (NO ROS2 REQUIRED)
+- Uses `ros_robot_controller_sdk.py` for direct serial communication with STM32
+- Arm servos: IDs 1-5 (5-DOF arm) + ID 10 (gripper)
+- Position range: 0-1000, with 500 as center/home position
+- Reads credentials from `config.json` automatically
+- Commands:
+  - `test` - Run comprehensive arm test (positions + gripper)
+  - `status` - Read all servo positions, voltages, temperatures
+  - `home` - Move arm to home position (all servos at 500)
+  - `servo-test` - Test individual servos or all servos
+  - `stop` - Emergency stop (disable torque on all servos)
 
 **Deployment Steps** (in order):
 1. `system_update` - apt update/upgrade, install base tools
