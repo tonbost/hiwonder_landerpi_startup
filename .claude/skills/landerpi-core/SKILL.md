@@ -145,3 +145,46 @@ LanderPi supports three chassis configurations:
 | Mecanum | Omnidirectional | 4 independent wheels |
 | Ackerman | Car-like steering | Front wheel steering |
 | Tank | Differential drive | Left/right track control |
+
+## ROS2 Stack Architecture
+
+The persistent ROS2 stack runs all drivers in a single Docker Compose service.
+
+### Stack Components
+
+| Node | Topic | Purpose |
+|------|-------|---------|
+| `ros_robot_controller` | `/ros_robot_controller/*` | STM32 communication (vendor) |
+| `cmd_vel_bridge` | `/cmd_vel` -> motors | Motion control |
+| `arm_controller` | `/arm/cmd`, `/arm/state` | Arm servo control |
+| `lidar_driver` | `/scan` | Lidar scanning |
+| `camera_driver` | `/aurora/*` | Depth camera (vendor) |
+
+### Deployment
+
+```bash
+# Deploy and start persistent ROS2 stack
+uv run python deploy_ros2_stack.py deploy
+
+# Stop stack
+uv run python deploy_ros2_stack.py stop
+
+# View logs
+uv run python deploy_ros2_stack.py logs
+uv run python deploy_ros2_stack.py logs -f  # Follow
+```
+
+### Testing Pattern
+
+All `*_ros2.py` test scripts follow this pattern:
+1. SSH to robot
+2. `docker exec landerpi-ros2` to run ROS2 commands
+3. Use `ros2 topic pub` to send commands
+4. Use `ros2 topic echo` to read data
+
+### Direct vs ROS2 Testing
+
+| Script Type | When to Use |
+|-------------|-------------|
+| `test_*.py` (direct) | Quick testing, debugging, offline recovery |
+| `test_*_ros2.py` | Production, nav2/SLAM integration |
