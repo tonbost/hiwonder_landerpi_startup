@@ -127,3 +127,5 @@ logs/
 
 # Git worktrees
 .worktrees/
+# Worktrees
+.worktrees/
