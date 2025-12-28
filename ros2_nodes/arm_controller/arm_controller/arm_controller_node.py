@@ -34,7 +34,15 @@ class ArmController(Node):
     ARM_SERVO_IDS = [1, 2, 3, 4, 5]
     GRIPPER_SERVO_ID = 10
     ALL_SERVO_IDS = ARM_SERVO_IDS + [GRIPPER_SERVO_ID]
-    HOME_POSITION = 500
+    # Home positions for each servo (user-defined resting position)
+    HOME_POSITIONS = {
+        1: 546,   # Base
+        2: 790,   # Shoulder
+        3: 0,     # Elbow (was -54, clamped to 0)
+        4: 324,   # Wrist
+        5: 501,   # Rotate
+        10: 500,  # Gripper
+    }
     GRIPPER_OPEN = 200
     GRIPPER_CLOSED = 700
 
@@ -63,7 +71,7 @@ class ArmController(Node):
         self.state_timer = self.create_timer(1.0, self.publish_state)
 
         # Track last commanded positions
-        self.last_positions = {sid: self.HOME_POSITION for sid in self.ALL_SERVO_IDS}
+        self.last_positions = {sid: self.HOME_POSITIONS[sid] for sid in self.ALL_SERVO_IDS}
 
         self.get_logger().info('Arm controller started (using ros_robot_controller topics)')
 
@@ -115,7 +123,9 @@ class ArmController(Node):
             # present_id[0] = 1 (enable flag), present_id[1] = servo ID
             servo_state.present_id = [1, int(servo_id)]
             # position[0] = 1 (enable flag), position[1] = position value
-            servo_state.position = [1, int(pos)]
+            # Clamp to valid range [0, 65535] - ROS2 msg requires unsigned int
+            pos_clamped = max(0, min(65535, int(pos)))
+            servo_state.position = [1, pos_clamped]
             states.append(servo_state)
 
         msg.state = states
@@ -129,7 +139,7 @@ class ArmController(Node):
 
     def go_home(self, duration: float = 2.0):
         """Move all servos to home position."""
-        positions = [[sid, self.HOME_POSITION] for sid in self.ALL_SERVO_IDS]
+        positions = [[sid, self.HOME_POSITIONS[sid]] for sid in self.ALL_SERVO_IDS]
         self.get_logger().info(f'Moving to home position over {duration}s')
         self.set_position(duration, positions)
 

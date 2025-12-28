@@ -24,6 +24,16 @@ console = Console()
 ARM_CMD_TOPIC = "/arm/cmd"
 ARM_STATE_TOPIC = "/arm/state"
 
+# Home positions for each servo (user-defined resting position)
+HOME_POSITIONS = {
+    1: 546,   # Base
+    2: 790,   # Shoulder
+    3: 0,     # Elbow (was -54, clamped to 0)
+    4: 324,   # Wrist
+    5: 501,   # Rotate
+    10: 500,  # Gripper
+}
+
 
 def load_config() -> dict:
     """Load connection config from config.json if exists."""
@@ -196,19 +206,20 @@ print("OK")
         """Test arm through various positions."""
         self.console.print("\n[yellow]Testing arm positions...[/yellow]")
 
-        # Position 1: Reach forward
+        # Position 1: Reach forward (from home)
         self.console.print("[cyan]Position 1: Reaching forward...[/cyan]")
-        if not self.set_position([[1, 500], [2, 700], [3, 300], [4, 500], [5, 500]], duration):
+        if not self.set_position([[1, 546], [2, 600], [3, 200], [4, 400], [5, 501]], duration):
             return False
 
         # Position 2: Reach up
         self.console.print("[cyan]Position 2: Reaching up...[/cyan]")
-        if not self.set_position([[1, 500], [2, 500], [3, 600], [4, 400], [5, 500]], duration):
+        if not self.set_position([[1, 546], [2, 400], [3, 300], [4, 500], [5, 501]], duration):
             return False
 
         # Position 3: Return to home
         self.console.print("[cyan]Position 3: Returning to home...[/cyan]")
-        if not self.set_position([[1, 500], [2, 500], [3, 500], [4, 500], [5, 500]], duration):
+        home_pos = [[sid, HOME_POSITIONS[sid]] for sid in [1, 2, 3, 4, 5]]
+        if not self.set_position(home_pos, duration):
             return False
 
         return True
@@ -277,12 +288,17 @@ def test(
         tester.control_gripper("open")  # Leave open
         time.sleep(0.5)
 
-        # Step 3: Test arm positions
-        console.print("\n[bold]Step 3: Testing arm positions[/bold]")
+        # Step 3: Full extension (all servos to 500)
+        console.print("\n[bold]Step 3: Full extension (500 everywhere)[/bold]")
+        tester.set_position([[1, 500], [2, 500], [3, 500], [4, 500], [5, 500]], duration)
+        time.sleep(1)
+
+        # Step 4: Test arm positions
+        console.print("\n[bold]Step 4: Testing arm positions[/bold]")
         tester.test_arm_positions(duration)
 
-        # Step 4: Return to home
-        console.print("\n[bold]Step 4: Returning to home[/bold]")
+        # Step 5: Return to home
+        console.print("\n[bold]Step 5: Returning to home[/bold]")
         tester.go_home(duration)
 
         console.print("\n[bold green]Full arm test complete![/bold green]")
