@@ -21,8 +21,11 @@ def get_config():
     return {}
 
 
-def upload_directory(conn: Connection, local_path: Path, remote_path: str):
+def upload_directory(conn: Connection, local_path: Path, remote_path: str, home_dir: str):
     """Upload a directory recursively."""
+    # Expand ~ to actual home directory
+    if remote_path.startswith("~"):
+        remote_path = remote_path.replace("~", home_dir, 1)
     conn.run(f"mkdir -p {remote_path}")
     for item in local_path.rglob("*"):
         if item.is_file() and "__pycache__" not in str(item):
@@ -58,28 +61,33 @@ def deploy(
     base_path = Path(__file__).parent
 
     with Connection(host, user=user, connect_kwargs={"password": password}) as conn:
+        # Get home directory for path expansion
+        result = conn.run("echo $HOME", hide=True)
+        home_dir = result.stdout.strip()
+
         # Create remote directories
         console.print("\n[bold]Creating directories...[/bold]")
         conn.run("mkdir -p ~/landerpi/{ros2_nodes,docker,config,drivers}")
 
         # Upload ros2_nodes
         console.print("\n[bold]Uploading ros2_nodes/...[/bold]")
-        upload_directory(conn, base_path / "ros2_nodes", "~/landerpi/ros2_nodes")
+        upload_directory(conn, base_path / "ros2_nodes", "~/landerpi/ros2_nodes", home_dir)
 
         # Upload docker
         console.print("\n[bold]Uploading docker/...[/bold]")
-        upload_directory(conn, base_path / "docker", "~/landerpi/docker")
+        upload_directory(conn, base_path / "docker", "~/landerpi/docker", home_dir)
 
         # Upload config
         console.print("\n[bold]Uploading config/...[/bold]")
-        upload_directory(conn, base_path / "config", "~/landerpi/config")
+        upload_directory(conn, base_path / "config", "~/landerpi/config", home_dir)
 
         # Upload drivers (read-only reference)
         console.print("\n[bold]Uploading drivers/ros_robot_controller-ros2/...[/bold]")
         upload_directory(
             conn,
             base_path / "drivers" / "ros_robot_controller-ros2",
-            "~/landerpi/drivers/ros_robot_controller-ros2"
+            "~/landerpi/drivers/ros_robot_controller-ros2",
+            home_dir
         )
 
         if start:
