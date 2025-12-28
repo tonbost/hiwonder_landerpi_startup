@@ -110,21 +110,87 @@ uv run python test_chassis_direct.py stop
 
 **Note:** This test uses direct serial communication and does NOT require ROS2 or the HiWonder system image.
 
-### 2b. Chassis Motion Test (ROS2 - Requires HiWonder Image)
-If you have the HiWonder system image with ROS2 installed:
-```bash
-# Test forward and backward
-uv run python test_chassis_motion.py test --host <PI_IP> --user <USERNAME> --password <PASSWORD>
+### 2b. ROS2 Stack Deployment (Recommended)
+Deploy a persistent ROS2 stack that starts automatically and survives reboots:
 
-# Emergency stop
-uv run python test_chassis_motion.py stop --host <PI_IP> --user <USERNAME> --password <PASSWORD>
+```bash
+# Deploy the full ROS2 stack (uploads files, builds, and starts)
+uv run python deploy_ros2_stack.py deploy
+
+# Stop the ROS2 stack
+uv run python deploy_ros2_stack.py stop
+
+# View container logs
+uv run python deploy_ros2_stack.py logs
+
+# Follow logs in real-time
+uv run python deploy_ros2_stack.py logs -f
 ```
 
-**Prerequisites:**
-- ROS2 controller must be running on robot:
-  ```bash
-  ros2 launch ros_robot_controller ros_robot_controller.launch.py
-  ```
+**What the ROS2 Stack Includes:**
+- `ros_robot_controller` - Vendor node for STM32 communication
+- `cmd_vel_bridge` - Converts `/cmd_vel` (Twist) to motor commands
+- `arm_controller` - Arm servo control via `/arm/cmd` topic
+- `lidar_driver` - LD19/MS200 lidar publishing to `/scan`
+- `camera_driver` - Aurora 930 depth camera (auto-detected)
+
+### 2c. ROS2 Test Suite
+Run all ROS2 tests with a single command:
+
+```bash
+# Run all tests (arm, lidar, camera, chassis)
+uv run python test_all_ros2.py run
+
+# Run with custom chassis distance
+uv run python test_all_ros2.py run --distance 0.5
+
+# Skip specific tests
+uv run python test_all_ros2.py run --skip-camera --skip-chassis
+
+# List available tests
+uv run python test_all_ros2.py list-tests
+```
+
+**Test Suite Output:**
+```
+┏━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Test    ┃ Status ┃ Duration ┃
+┡━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Arm     │  PASS  │    45.0s │
+│ Lidar   │  PASS  │     4.3s │
+│ Camera  │  PASS  │     2.3s │
+│ Chassis │  PASS  │    30.0s │
+└─────────┴────────┴──────────┘
+```
+
+### 2d. Individual ROS2 Tests
+Test individual components via the deployed ROS2 stack:
+
+```bash
+# Arm test via ROS2
+uv run python test_arm_ros2.py test --yes      # Full arm test
+uv run python test_arm_ros2.py home --yes      # Move to home position
+uv run python test_arm_ros2.py status          # Read arm state
+
+# Lidar test via ROS2
+uv run python test_lidar_ros2.py check         # Check lidar status
+uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
+
+# Camera test via ROS2
+uv run python test_cameradepth_ros2.py check   # Check camera topics
+uv run python test_cameradepth_ros2.py stream  # Read camera streams
+
+# Chassis motion test via ROS2
+uv run python test_chassis_motion_ros2.py test --yes           # Forward + backward
+uv run python test_chassis_motion_ros2.py test --direction all --yes  # All 6 directions
+uv run python test_chassis_motion_ros2.py stop                 # Emergency stop
+```
+
+**Chassis Directions (Mecanum Wheels):**
+- `forward` / `backward` - Linear movement (up to 1m)
+- `turn_left` / `turn_right` - Rotate in place
+- `strafe_left` / `strafe_right` - Lateral movement
+- `all` - Full test sequence (all 6 directions)
 
 ### 3. Lidar Test (Docker-based ROS2)
 Test MS200/LD19 lidar connectivity and functionality. ROS2 runs inside Docker containers.
@@ -206,14 +272,14 @@ uv run python test_arm.py stop
 ```
 
 **Servo Configuration:**
-| Servo ID | Function | Position Range |
-|----------|----------|----------------|
-| 1 | Base rotation (Joint 1) | 0-1000 |
-| 2 | Shoulder (Joint 2) | 0-1000 |
-| 3 | Elbow (Joint 3) | 0-1000 |
-| 4 | Wrist pitch (Joint 4) | 0-1000 |
-| 5 | Wrist roll (Joint 5) | 0-1000 |
-| 10 | Gripper | 0-1000 (200=open, 700=closed) |
+| Servo ID | Function | Position Range | Home Position |
+|----------|----------|----------------|---------------|
+| 1 | Base rotation (Joint 1) | 0-1000 | 550 |
+| 2 | Shoulder (Joint 2) | 0-1000 | 785 |
+| 3 | Elbow (Joint 3) | 0-1000 | 0 |
+| 4 | Wrist pitch (Joint 4) | 0-1000 | 257 |
+| 5 | Wrist roll (Joint 5) | 0-1000 | 501 |
+| 10 | Gripper | 0-1000 | 497 (200=open, 700=closed) |
 
 **Options:**
 - `--duration`: Movement duration in seconds (default: 2.0)
