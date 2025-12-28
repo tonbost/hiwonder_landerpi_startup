@@ -48,6 +48,25 @@ Back
 - **M3** = Front-Right
 - **M4** = Back-Right
 
+## Motor Sign Convention
+
+**CRITICAL: The left and right motors have opposite sign conventions.**
+
+| Side | Motors | Forward | Backward |
+|------|--------|---------|----------|
+| Left | M1, M2 | **Negative** (-) | Positive (+) |
+| Right | M3, M4 | **Positive** (+) | Negative (-) |
+
+This is because the motors are mounted facing opposite directions. When implementing kinematics or control:
+- For forward motion: left wheels get negative speed, right wheels get positive speed
+- For backward motion: left wheels get positive speed, right wheels get negative speed
+
+**Example:** To move forward at 0.3 m/s:
+```python
+board.set_motor_speed([[1, -0.3], [2, -0.3], [3, 0.3], [4, 0.3]])
+#                      ^^ LEFT negative ^^   ^^ RIGHT positive ^^
+```
+
 ## Direction Control
 
 Speed: 0.3 m/s (maximum safe speed)
