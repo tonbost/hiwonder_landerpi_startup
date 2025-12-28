@@ -36,12 +36,12 @@ class ArmController(Node):
     ALL_SERVO_IDS = ARM_SERVO_IDS + [GRIPPER_SERVO_ID]
     # Home positions for each servo (user-defined resting position)
     HOME_POSITIONS = {
-        1: 546,   # Base
-        2: 790,   # Shoulder
-        3: 0,     # Elbow (was -54, clamped to 0)
-        4: 324,   # Wrist
+        1: 550,   # Base
+        2: 785,   # Shoulder
+        3: 0,     # Elbow (reads negative, clamped to 0)
+        4: 257,   # Wrist
         5: 501,   # Rotate
-        10: 500,  # Gripper
+        10: 497,  # Gripper
     }
     GRIPPER_OPEN = 200
     GRIPPER_CLOSED = 700
