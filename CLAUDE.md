@@ -43,8 +43,11 @@ uv run python test_chassis_direct.py test --direction strafe_left --duration 2 -
 uv run python test_chassis_direct.py motor-test
 uv run python test_chassis_direct.py motor-test --motor 1
 
-# Test chassis motion - via ROS2 (requires HiWonder image)
-uv run python test_chassis_motion.py test --host <IP> --user <USER> --password <PASS>
+# Test chassis motion - via ROS2 (requires deployed stack, uses config.json)
+uv run python test_chassis_motion_ros2.py test --direction all --distance 1.0 --yes  # Full test (all 6 movements)
+uv run python test_chassis_motion_ros2.py test --direction forward --distance 0.5 --yes
+uv run python test_chassis_motion_ros2.py test --direction strafe_left --distance 0.5 --yes
+uv run python test_chassis_motion_ros2.py test --direction turn_right --yes
 
 # Emergency stop
 uv run python test_chassis_direct.py stop

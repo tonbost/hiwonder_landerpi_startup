@@ -3,7 +3,7 @@
 ROS2-based chassis motion test for LanderPi robot.
 Requires deployed ROS2 stack: `deploy_ros2_stack.py deploy`
 
-Moves the robot forward and backward no more than 20 cm.
+Supports forward/backward motion, turning, and strafing (mecanum wheels).
 SAFETY: This script REQUIRES user approval before moving the robot.
 """
 import json
@@ -22,9 +22,11 @@ app = typer.Typer(help="LanderPi Chassis Motion Test (ROS2 Stack)")
 console = Console()
 
 # Motion parameters
-MAX_DISTANCE_M = 0.20  # 20 cm max
+MAX_DISTANCE_M = 1.0   # 1.0 m max
 LINEAR_SPEED = 0.15    # m/s (safe speed, max is 0.3)
-MOVEMENT_DURATION = MAX_DISTANCE_M / LINEAR_SPEED  # ~1.33 seconds
+STRAFE_SPEED = 0.15    # m/s for sideways motion (mecanum wheels)
+ANGULAR_SPEED = 0.5    # rad/s for turning
+TURN_DURATION = 2.0    # seconds for turning maneuvers
 
 # ROS2 topic for velocity commands (cmd_vel_bridge listens here)
 CMD_VEL_TOPIC = "/cmd_vel"
@@ -99,7 +101,8 @@ class ChassisMotionTest:
             self.console.print(f"[red]Topic check failed:[/red] {e}")
             return False
 
-    def publish_twist(self, linear_x: float, duration: float) -> bool:
+    def publish_twist(self, linear_x: float = 0.0, linear_y: float = 0.0,
+                      angular_z: float = 0.0, duration: float = 1.0) -> bool:
         """Publish Twist message using Python script to avoid escaping issues."""
         script = f'''
 import rclpy
@@ -116,11 +119,11 @@ time.sleep(0.3)
 
 msg = Twist()
 msg.linear.x = {linear_x}
-msg.linear.y = 0.0
+msg.linear.y = {linear_y}
 msg.linear.z = 0.0
 msg.angular.x = 0.0
 msg.angular.y = 0.0
-msg.angular.z = 0.0
+msg.angular.z = {angular_z}
 
 # Publish at 10Hz for duration
 start = time.time()
@@ -130,6 +133,8 @@ while time.time() - start < {duration}:
 
 # Send stop
 msg.linear.x = 0.0
+msg.linear.y = 0.0
+msg.angular.z = 0.0
 pub.publish(msg)
 time.sleep(0.1)
 
@@ -156,7 +161,7 @@ print("OK")
     def stop_robot(self):
         """Send stop command to the robot."""
         self.console.print("[red]Stopping robot...[/red]")
-        self.publish_twist(0.0, 0.2)
+        self.publish_twist(linear_x=0.0, linear_y=0.0, angular_z=0.0, duration=0.2)
 
     def move_forward(self, distance_m: float = MAX_DISTANCE_M) -> bool:
         """Move robot forward by specified distance."""
@@ -164,7 +169,7 @@ print("OK")
 
         self.console.print(f"[bold yellow]Moving FORWARD {distance_m*100:.1f} cm at {LINEAR_SPEED} m/s ({duration:.2f}s)[/bold yellow]")
 
-        if self.publish_twist(LINEAR_SPEED, duration):
+        if self.publish_twist(linear_x=LINEAR_SPEED, duration=duration):
             self.console.print("[green]Forward movement complete[/green]")
             return True
         return False
@@ -175,8 +180,48 @@ print("OK")
 
         self.console.print(f"[bold yellow]Moving BACKWARD {distance_m*100:.1f} cm at {LINEAR_SPEED} m/s ({duration:.2f}s)[/bold yellow]")
 
-        if self.publish_twist(-LINEAR_SPEED, duration):
+        if self.publish_twist(linear_x=-LINEAR_SPEED, duration=duration):
             self.console.print("[green]Backward movement complete[/green]")
+            return True
+        return False
+
+    def turn_left(self, duration: float = TURN_DURATION) -> bool:
+        """Turn robot left (counterclockwise)."""
+        self.console.print(f"[bold yellow]TURNING LEFT at {ANGULAR_SPEED} rad/s ({duration:.2f}s)[/bold yellow]")
+
+        if self.publish_twist(angular_z=ANGULAR_SPEED, duration=duration):
+            self.console.print("[green]Left turn complete[/green]")
+            return True
+        return False
+
+    def turn_right(self, duration: float = TURN_DURATION) -> bool:
+        """Turn robot right (clockwise)."""
+        self.console.print(f"[bold yellow]TURNING RIGHT at {ANGULAR_SPEED} rad/s ({duration:.2f}s)[/bold yellow]")
+
+        if self.publish_twist(angular_z=-ANGULAR_SPEED, duration=duration):
+            self.console.print("[green]Right turn complete[/green]")
+            return True
+        return False
+
+    def strafe_left(self, distance_m: float = MAX_DISTANCE_M) -> bool:
+        """Strafe robot left (sideways motion with mecanum wheels)."""
+        duration = distance_m / STRAFE_SPEED
+
+        self.console.print(f"[bold yellow]STRAFING LEFT {distance_m*100:.1f} cm at {STRAFE_SPEED} m/s ({duration:.2f}s)[/bold yellow]")
+
+        if self.publish_twist(linear_y=STRAFE_SPEED, duration=duration):
+            self.console.print("[green]Left strafe complete[/green]")
+            return True
+        return False
+
+    def strafe_right(self, distance_m: float = MAX_DISTANCE_M) -> bool:
+        """Strafe robot right (sideways motion with mecanum wheels)."""
+        duration = distance_m / STRAFE_SPEED
+
+        self.console.print(f"[bold yellow]STRAFING RIGHT {distance_m*100:.1f} cm at {STRAFE_SPEED} m/s ({duration:.2f}s)[/bold yellow]")
+
+        if self.publish_twist(linear_y=-STRAFE_SPEED, duration=duration):
+            self.console.print("[green]Right strafe complete[/green]")
             return True
         return False
 
@@ -186,15 +231,15 @@ def test(
     host: Optional[str] = typer.Option(None, help="Robot IP address"),
     user: Optional[str] = typer.Option(None, help="SSH Username"),
     password: Optional[str] = typer.Option(None, help="SSH Password"),
-    distance: float = typer.Option(0.10, help="Distance to move in meters (max 0.20)"),
-    direction: str = typer.Option("both", help="Direction: forward, backward, or both"),
+    distance: float = typer.Option(1.0, help="Distance to move in meters (max 1.0)"),
+    direction: str = typer.Option("all", help="Direction: forward, backward, turn_left, turn_right, strafe_left, strafe_right, or all"),
     skip_approval: bool = typer.Option(False, "--yes", "-y", help="Skip approval prompt"),
 ):
     """
     Test chassis motion via ROS2 stack.
 
     Requires: deploy_ros2_stack.py deploy
-    SAFETY: Maximum movement is 20 cm. Robot will stop immediately after movement.
+    SAFETY: Maximum movement is 1.0 m. Robot will stop immediately after each movement.
     """
     config = load_config()
     host = host or config.get("host")
@@ -203,6 +248,13 @@ def test(
 
     if not host or not user:
         console.print("[red]Error: host and user required[/red]")
+        sys.exit(1)
+
+    # Validate direction
+    valid_directions = ["forward", "backward", "turn_left", "turn_right", "strafe_left", "strafe_right", "all"]
+    if direction not in valid_directions:
+        console.print(f"[red]Invalid direction: {direction}[/red]")
+        console.print(f"[yellow]Valid options: {', '.join(valid_directions)}[/yellow]")
         sys.exit(1)
 
     # Validate distance
@@ -220,9 +272,10 @@ def test(
         f"[bold]Chassis Motion Test (ROS2)[/bold]\n\n"
         f"Host: {host}\n"
         f"Distance: {distance*100:.1f} cm\n"
-        f"Speed: {LINEAR_SPEED} m/s\n"
-        f"Direction: {direction}\n"
-        f"Duration: {distance/LINEAR_SPEED:.2f}s per direction\n\n"
+        f"Linear Speed: {LINEAR_SPEED} m/s\n"
+        f"Strafe Speed: {STRAFE_SPEED} m/s\n"
+        f"Angular Speed: {ANGULAR_SPEED} rad/s\n"
+        f"Direction: {direction}\n\n"
         f"[dim]Using deployed ROS2 stack[/dim]",
         title="Test Parameters",
         border_style="blue"
@@ -246,7 +299,10 @@ def test(
     if not skip_approval:
         console.print("\n[bold red]WARNING: The robot is about to MOVE![/bold red]")
         console.print("[yellow]Ensure the area around the robot is clear.[/yellow]")
-        console.print("[yellow]The robot will move up to 20cm in each direction.[/yellow]")
+        if direction == "all":
+            console.print("[yellow]The robot will perform: forward, backward, turn left, turn right, strafe left, strafe right.[/yellow]")
+        else:
+            console.print(f"[yellow]The robot will perform: {direction}.[/yellow]")
 
         if not Confirm.ask("\n[bold]Do you approve the robot to move?[/bold]", default=False):
             console.print("[blue]Motion test cancelled by user[/blue]")
@@ -257,12 +313,39 @@ def test(
 
     # Execute movements
     try:
-        if direction in ("forward", "both"):
-            tester.move_forward(distance)
-            time.sleep(1)  # Pause between movements
+        if direction == "all":
+            # Full test sequence
+            console.print("\n[bold cyan]Running full test sequence...[/bold cyan]\n")
 
-        if direction in ("backward", "both"):
+            tester.move_forward(distance)
+            time.sleep(1)
+
             tester.move_backward(distance)
+            time.sleep(1)
+
+            tester.turn_left()
+            time.sleep(1)
+
+            tester.turn_right()
+            time.sleep(1)
+
+            tester.strafe_left(distance)
+            time.sleep(1)
+
+            tester.strafe_right(distance)
+
+        elif direction == "forward":
+            tester.move_forward(distance)
+        elif direction == "backward":
+            tester.move_backward(distance)
+        elif direction == "turn_left":
+            tester.turn_left()
+        elif direction == "turn_right":
+            tester.turn_right()
+        elif direction == "strafe_left":
+            tester.strafe_left(distance)
+        elif direction == "strafe_right":
+            tester.strafe_right(distance)
 
     except KeyboardInterrupt:
         console.print("\n[red]Test interrupted! Stopping robot...[/red]")
