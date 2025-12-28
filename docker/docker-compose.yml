@@ -1,0 +1,50 @@
+# LanderPi ROS2 Stack
+# Persists across reboots with restart: unless-stopped
+
+services:
+  ros2-stack:
+    image: landerpi-ros2:latest
+    container_name: landerpi-ros2
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+
+    devices:
+      - /dev/ttyAMA0:/dev/ttyAMA0
+
+    volumes:
+      # Custom nodes (read-only)
+      - ../ros2_nodes/cmd_vel_bridge:/ros2_ws/src/cmd_vel_bridge:ro
+      # Vendor drivers (read-only) - never modified
+      - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller:/ros2_ws/src/ros_robot_controller:ro
+      - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller_msgs:/ros2_ws/src/ros_robot_controller_msgs:ro
+      # Config (read-only)
+      - ../config:/ros2_ws/config:ro
+      # Build artifacts (persistent)
+      - ros2_build:/ros2_ws/build
+      - ros2_install:/ros2_ws/install
+      - ros2_log:/ros2_ws/log
+
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+    command: >
+      bash -c "
+        set -e
+        source /opt/ros/humble/setup.bash
+        cd /ros2_ws
+
+        echo '=== Building ROS2 packages ==='
+        colcon build --symlink-install --packages-select ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge
+
+        source install/setup.bash
+
+        echo '=== Starting LanderPi ROS2 stack ==='
+        ros2 launch cmd_vel_bridge landerpi.launch.py
+      "
+
+volumes:
+  ros2_build:
+  ros2_install:
+  ros2_log:
