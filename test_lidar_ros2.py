@@ -114,8 +114,8 @@ class LidarROS2Test:
     def read_scan(self, samples: int = 1) -> dict:
         """Read scan data and return statistics."""
         try:
-            # Use Python to analyze scan data
-            script = f'''
+            # Write scan reader script to temp file on robot
+            script = '''
 import sys
 import math
 import rclpy
@@ -124,44 +124,53 @@ from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 import time
 
+MAX_SAMPLES = %d
+SCAN_TOPIC = "%s"
+
 class ScanReader(Node):
     def __init__(self):
-        super().__init__('scan_reader')
+        super().__init__("scan_reader")
         self.samples = []
-        self.max_samples = {samples}
         qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        self.sub = self.create_subscription(LaserScan, '{SCAN_TOPIC}', self.cb, qos)
+        self.sub = self.create_subscription(LaserScan, SCAN_TOPIC, self.cb, qos)
 
     def cb(self, msg):
-        if len(self.samples) >= self.max_samples:
+        if len(self.samples) >= MAX_SAMPLES:
             return
         ranges = [r for r in msg.ranges if 0.05 < r < 12.0 and not math.isinf(r)]
         if ranges:
-            self.samples.append({{
-                'min': min(ranges),
-                'max': max(ranges),
-                'avg': sum(ranges)/len(ranges),
-                'count': len(ranges),
-                'total': len(msg.ranges)
-            }})
-            print(f"Sample {{len(self.samples)}}: min={{min(ranges):.2f}}m max={{max(ranges):.2f}}m points={{len(ranges)}}")
+            sample_data = {
+                "min": min(ranges),
+                "max": max(ranges),
+                "avg": sum(ranges)/len(ranges),
+                "count": len(ranges),
+                "total": len(msg.ranges)
+            }
+            self.samples.append(sample_data)
+            print("Sample %%d: min=%%.2fm max=%%.2fm points=%%d" %% (
+                len(self.samples), sample_data["min"], sample_data["max"], sample_data["count"]))
 
 rclpy.init()
 node = ScanReader()
 start = time.time()
-while len(node.samples) < node.max_samples and time.time() - start < 10:
+while len(node.samples) < MAX_SAMPLES and time.time() - start < 10:
     rclpy.spin_once(node, timeout_sec=0.5)
 if node.samples:
     print("SUCCESS")
 else:
     print("NO_DATA")
 rclpy.shutdown()
-'''
+''' % (samples, SCAN_TOPIC)
+
+            # Write script to temp file and copy to container
+            self.conn.run(f"cat > /tmp/scan_reader.py << 'SCRIPT_EOF'\n{script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/scan_reader.py landerpi-ros2:/tmp/scan_reader.py", hide=True)
+
             result = self.conn.run(
-                f"docker exec landerpi-ros2 bash -c '"
-                f"source /opt/ros/humble/setup.bash && "
-                f"source /ros2_ws/install/setup.bash && "
-                f"python3 -c \"{script}\"'",
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "python3 /tmp/scan_reader.py'",
                 hide=False, warn=True, timeout=20
             )
             return {'success': 'SUCCESS' in result.stdout}

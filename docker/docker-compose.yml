@@ -45,12 +45,7 @@ services:
         pip3 install -q pyserial 2>/dev/null || true
 
         echo '=== Building ROS2 packages ==='
-        colcon build --symlink-install --packages-select \
-          ros_robot_controller_msgs \
-          ros_robot_controller \
-          cmd_vel_bridge \
-          arm_controller \
-          lidar_driver
+        colcon build --symlink-install --packages-select ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge arm_controller lidar_driver
 
         source install/setup.bash
 

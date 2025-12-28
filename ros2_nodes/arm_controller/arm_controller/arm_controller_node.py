@@ -2,8 +2,12 @@
 """
 ROS2 node for controlling the LanderPi 5-DOF arm.
 
+Uses ros_robot_controller topics instead of direct SDK access to avoid
+serial port conflicts.
+
 Subscribes to: /arm/cmd (std_msgs/String) - JSON commands
 Publishes to: /arm/state (std_msgs/String) - JSON state
+Publishes to: /ros_robot_controller/bus_servo/set_state - Servo commands
 
 Command format:
   {"action": "set_position", "duration": 2.0, "positions": [[1, 500], [2, 500], ...]}
@@ -13,19 +17,18 @@ Command format:
 """
 
 import json
-import sys
 import time
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-# SDK path - mounted from host
-sys.path.insert(0, '/ros2_ws/src/ros_robot_controller/ros_robot_controller')
+# Import vendor messages
+from ros_robot_controller_msgs.msg import SetBusServoState, BusServoState
 
 
 class ArmController(Node):
-    """ROS2 node for arm control via SDK."""
+    """ROS2 node for arm control via ros_robot_controller topics."""
 
     # Servo configuration
     ARM_SERVO_IDS = [1, 2, 3, 4, 5]
@@ -38,22 +41,17 @@ class ArmController(Node):
     def __init__(self):
         super().__init__('arm_controller')
 
-        # Try to import SDK
-        try:
-            from ros_robot_controller_sdk import Board
-            self.board = Board()
-            self.board.enable_reception()
-            self.sdk_available = True
-            self.get_logger().info('SDK initialized successfully')
-        except Exception as e:
-            self.board = None
-            self.sdk_available = False
-            self.get_logger().warn(f'SDK not available: {e}')
+        # Publisher for servo commands (via ros_robot_controller)
+        self.servo_pub = self.create_publisher(
+            SetBusServoState,
+            '/ros_robot_controller/bus_servo/set_state',
+            10
+        )
 
-        # Publisher for arm state
+        # Publisher for arm state (high-level)
         self.state_pub = self.create_publisher(String, '/arm/state', 10)
 
-        # Subscriber for arm commands
+        # Subscriber for arm commands (high-level)
         self.cmd_sub = self.create_subscription(
             String,
             '/arm/cmd',
@@ -64,13 +62,18 @@ class ArmController(Node):
         # State timer (publish at 1Hz)
         self.state_timer = self.create_timer(1.0, self.publish_state)
 
-        self.get_logger().info('Arm controller started')
+        # Track last commanded positions
+        self.last_positions = {sid: self.HOME_POSITION for sid in self.ALL_SERVO_IDS}
+
+        self.get_logger().info('Arm controller started (using ros_robot_controller topics)')
 
     def cmd_callback(self, msg: String):
         """Handle incoming arm commands."""
         try:
             cmd = json.loads(msg.data)
             action = cmd.get('action', '')
+
+            self.get_logger().info(f'Received command: {action}')
 
             if action == 'set_position':
                 self.set_position(cmd.get('duration', 2.0), cmd.get('positions', []))
@@ -89,36 +92,68 @@ class ArmController(Node):
             self.get_logger().error(f'Command error: {e}')
 
     def set_position(self, duration: float, positions: list):
-        """Set servo positions."""
-        if not self.sdk_available:
-            self.get_logger().warn('SDK not available')
+        """Set servo positions via ros_robot_controller topic.
+
+        The vendor node expects a specific format:
+        - Each servo needs its own BusServoState
+        - present_id = [1, servo_id]  (1 = flag to enable)
+        - position = [1, position_value]  (1 = flag to enable)
+        """
+        if not positions:
             return
 
         self.get_logger().info(f'Setting positions: {positions} over {duration}s')
-        self.board.bus_servo_set_position(duration, positions)
+
+        # Build SetBusServoState message
+        msg = SetBusServoState()
+        msg.duration = duration
+
+        # Create BusServoState for EACH servo (vendor API requirement)
+        states = []
+        for servo_id, pos in positions:
+            servo_state = BusServoState()
+            # present_id[0] = 1 (enable flag), present_id[1] = servo ID
+            servo_state.present_id = [1, int(servo_id)]
+            # position[0] = 1 (enable flag), position[1] = position value
+            servo_state.position = [1, int(pos)]
+            states.append(servo_state)
+
+        msg.state = states
+
+        # Publish command
+        self.servo_pub.publish(msg)
+
+        # Update tracked positions
+        for servo_id, pos in positions:
+            self.last_positions[servo_id] = pos
 
     def go_home(self, duration: float = 2.0):
         """Move all servos to home position."""
-        if not self.sdk_available:
-            return
-
         positions = [[sid, self.HOME_POSITION] for sid in self.ALL_SERVO_IDS]
         self.get_logger().info(f'Moving to home position over {duration}s')
-        self.board.bus_servo_set_position(duration, positions)
+        self.set_position(duration, positions)
 
     def stop(self):
         """Stop all servos."""
-        if not self.sdk_available:
-            return
-
         self.get_logger().info('Stopping all servos')
-        self.board.bus_servo_stop(self.ALL_SERVO_IDS)
+
+        # Send stop command via BusServoState
+        # Vendor format: present_id = [1, servo_id], stop = [1]
+        msg = SetBusServoState()
+        msg.duration = 0.0
+
+        states = []
+        for servo_id in self.ALL_SERVO_IDS:
+            servo_state = BusServoState()
+            servo_state.present_id = [1, int(servo_id)]
+            servo_state.stop = [1]
+            states.append(servo_state)
+
+        msg.state = states
+        self.servo_pub.publish(msg)
 
     def control_gripper(self, position):
         """Control gripper."""
-        if not self.sdk_available:
-            return
-
         if position == 'open':
             pulse = self.GRIPPER_OPEN
         elif position == 'close':
@@ -127,24 +162,14 @@ class ArmController(Node):
             pulse = int(position)
 
         self.get_logger().info(f'Gripper to {pulse}')
-        self.board.bus_servo_set_position(0.5, [[self.GRIPPER_SERVO_ID, pulse]])
+        self.set_position(0.5, [[self.GRIPPER_SERVO_ID, pulse]])
 
     def publish_state(self):
         """Publish current arm state."""
         state = {
-            'sdk_available': self.sdk_available,
             'timestamp': time.time(),
+            'last_positions': self.last_positions,
         }
-
-        if self.sdk_available:
-            try:
-                positions = {}
-                for sid in self.ALL_SERVO_IDS:
-                    pos = self.board.bus_servo_read_position(sid)
-                    positions[sid] = pos[0] if pos else None
-                state['positions'] = positions
-            except Exception:
-                pass
 
         msg = String()
         msg.data = json.dumps(state)

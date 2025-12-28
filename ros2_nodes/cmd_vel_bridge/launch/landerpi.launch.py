@@ -51,7 +51,7 @@ def generate_launch_description():
     # cmd_vel_bridge node
     cmd_vel_bridge_node = Node(
         package='cmd_vel_bridge',
-        executable='cmd_vel_bridge_node',
+        executable='cmd_vel_bridge',
         name='cmd_vel_bridge',
         output='screen',
         parameters=[{

@@ -95,19 +95,46 @@ class ArmROS2Test:
             return False
 
     def publish_arm_cmd(self, cmd: dict) -> bool:
-        """Publish command to arm topic."""
-        cmd_json = json.dumps(cmd).replace('"', '\\"')
+        """Publish command to arm topic using Python script to avoid escaping issues."""
+        cmd_json = json.dumps(cmd)
         try:
+            # Create a simple Python publisher script
+            script = f'''
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import json
+
+rclpy.init()
+node = Node("arm_cmd_pub")
+pub = node.create_publisher(String, "{ARM_CMD_TOPIC}", 10)
+
+# Wait for subscriber
+import time
+time.sleep(0.5)
+
+msg = String()
+msg.data = {repr(cmd_json)}
+pub.publish(msg)
+
+# Spin briefly to ensure message is sent
+rclpy.spin_once(node, timeout_sec=0.5)
+node.destroy_node()
+rclpy.shutdown()
+print("OK")
+'''
+            # Write script to host and copy to container
+            self.conn.run(f"cat > /tmp/arm_pub.py << 'SCRIPT_EOF'\n{script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/arm_pub.py landerpi-ros2:/tmp/arm_pub.py", hide=True)
+
             result = self.conn.run(
-                f"docker exec landerpi-ros2 bash -c '"
-                f"source /opt/ros/humble/setup.bash && "
-                f"source /ros2_ws/install/setup.bash && "
-                f"ros2 topic pub --once {ARM_CMD_TOPIC} std_msgs/msg/String "
-                f"\"{{data: \\\"{cmd_json}\\\"}}\""
-                f"'",
-                hide=True, warn=True
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "python3 /tmp/arm_pub.py'",
+                hide=True, warn=True, timeout=10
             )
-            return result.ok
+            return result.ok and "OK" in result.stdout
         except Exception as e:
             self.console.print(f"[red]Publish failed:[/red] {e}")
             return False
@@ -156,6 +183,35 @@ class ArmROS2Test:
             time.sleep(1)
             return True
         return False
+
+    def set_position(self, positions: list, duration: float = 2.0) -> bool:
+        """Set specific servo positions."""
+        cmd = {"action": "set_position", "duration": duration, "positions": positions}
+        if self.publish_arm_cmd(cmd):
+            time.sleep(duration + 0.5)
+            return True
+        return False
+
+    def test_arm_positions(self, duration: float = 2.0) -> bool:
+        """Test arm through various positions."""
+        self.console.print("\n[yellow]Testing arm positions...[/yellow]")
+
+        # Position 1: Reach forward
+        self.console.print("[cyan]Position 1: Reaching forward...[/cyan]")
+        if not self.set_position([[1, 500], [2, 700], [3, 300], [4, 500], [5, 500]], duration):
+            return False
+
+        # Position 2: Reach up
+        self.console.print("[cyan]Position 2: Reaching up...[/cyan]")
+        if not self.set_position([[1, 500], [2, 500], [3, 600], [4, 400], [5, 500]], duration):
+            return False
+
+        # Position 3: Return to home
+        self.console.print("[cyan]Position 3: Returning to home...[/cyan]")
+        if not self.set_position([[1, 500], [2, 500], [3, 500], [4, 500], [5, 500]], duration):
+            return False
+
+        return True
 
 
 @app.command()
@@ -207,14 +263,29 @@ def test(
             sys.exit(0)
 
     try:
+        # Step 1: Move to home
+        console.print("\n[bold]Step 1: Moving to home position[/bold]")
         tester.go_home(duration)
         time.sleep(1)
+
+        # Step 2: Test gripper
+        console.print("\n[bold]Step 2: Testing gripper[/bold]")
         tester.control_gripper("open")
         time.sleep(1)
         tester.control_gripper("close")
         time.sleep(1)
+        tester.control_gripper("open")  # Leave open
+        time.sleep(0.5)
+
+        # Step 3: Test arm positions
+        console.print("\n[bold]Step 3: Testing arm positions[/bold]")
+        tester.test_arm_positions(duration)
+
+        # Step 4: Return to home
+        console.print("\n[bold]Step 4: Returning to home[/bold]")
         tester.go_home(duration)
-        console.print("\n[bold green]Arm test complete![/bold green]")
+
+        console.print("\n[bold green]Full arm test complete![/bold green]")
     except KeyboardInterrupt:
         console.print("\n[red]Interrupted![/red]")
         tester.stop_arm()
