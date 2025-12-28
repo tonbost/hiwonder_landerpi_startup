@@ -94,6 +94,15 @@ uv run python deploy_ros2_stack.py deploy    # Upload files and start stack
 uv run python deploy_ros2_stack.py stop      # Stop the ROS2 stack
 uv run python deploy_ros2_stack.py logs      # View container logs
 uv run python deploy_ros2_stack.py logs -f   # Follow logs in real-time
+
+# Test sensors via ROS2 stack (requires deploy_ros2_stack.py deploy)
+uv run python test_arm_ros2.py test --yes        # Arm via ROS2 topics
+uv run python test_arm_ros2.py home --yes        # Home position
+uv run python test_arm_ros2.py status            # Arm state
+uv run python test_lidar_ros2.py check           # Lidar status
+uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
+uv run python test_cameradepth_ros2.py check     # Camera topics
+uv run python test_cameradepth_ros2.py stream    # Read streams
 ```
 
 ## Architecture
@@ -154,6 +163,28 @@ uv run python deploy_ros2_stack.py logs -f   # Follow logs in real-time
   - `home` - Move arm to home position (all servos at 500)
   - `servo-test` - Test individual servos or all servos
   - `stop` - Emergency stop (disable torque on all servos)
+
+**`test_arm_ros2.py`** - ROS2-based arm test (requires deployed stack)
+- Uses `/arm/cmd` and `/arm/state` topics via `docker exec landerpi-ros2`
+- Commands: `test`, `home`, `stop`, `status`
+
+**`test_lidar_ros2.py`** - ROS2-based lidar test (requires deployed stack)
+- Uses `/scan` topic via `docker exec landerpi-ros2`
+- Commands: `check`, `scan`, `status`
+
+**`test_cameradepth_ros2.py`** - ROS2-based camera test (requires deployed stack)
+- Uses `/aurora/*` topics via `docker exec landerpi-ros2`
+- Commands: `check`, `stream`, `status`
+
+**`ros2_nodes/arm_controller/`** - ROS2 arm controller node
+- Subscribes to `/arm/cmd` (JSON commands)
+- Publishes to `/arm/state` (JSON state)
+- Supports: set_position, home, stop, gripper actions
+
+**`ros2_nodes/lidar_driver/`** - ROS2 lidar driver node
+- Publishes to `/scan` (sensor_msgs/LaserScan)
+- Reads LD19/MS200 serial protocol at 230400 baud
+- Accumulates 360° scan data before publishing
 
 **Deployment Steps** (in order):
 1. `system_update` - apt update/upgrade, install base tools
