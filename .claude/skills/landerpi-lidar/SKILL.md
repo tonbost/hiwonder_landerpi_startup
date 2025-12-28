@@ -26,6 +26,14 @@ Lidar control skill for HiWonder LanderPi with LD19/MS200 lidar. Provides driver
 | `uv run python test_lidar.py test --mode 3 --duration 10 --yes` | Guard mode |
 | `uv run python test_lidar.py stop` | Stop all lidar functionality |
 
+### ROS2 Stack Testing
+
+For ROS2-based testing (requires deployed stack):
+```bash
+uv run python test_lidar_ros2.py check       # Check lidar status
+uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
+```
+
 ## Hardware Configuration
 
 | Property | Value |

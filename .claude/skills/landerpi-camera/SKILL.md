@@ -23,6 +23,14 @@ Depth camera control skill for HiWonder LanderPi with Deptrum Aurora 930 camera.
 | `uv run python test_cameradepth.py stop-driver` | Stop camera driver container |
 | `uv run python test_cameradepth.py validate` | Full camera validation |
 
+### ROS2 Stack Testing
+
+For ROS2-based testing (requires deployed stack):
+```bash
+uv run python test_cameradepth_ros2.py check   # Check camera topics
+uv run python test_cameradepth_ros2.py stream  # Read stream samples
+```
+
 ## Hardware Configuration
 
 | Property | Value |

@@ -21,6 +21,13 @@ Motion control skill for HiWonder LanderPi Mecanum chassis. Provides direct seri
 | `uv run python test_chassis_direct.py stop` | Emergency stop |
 | `uv run python test_chassis_direct.py status` | Get battery/IMU status |
 
+### ROS2 Stack Testing
+
+For ROS2-based testing (requires deployed stack):
+```bash
+uv run python test_chassis_motion.py test  # Test via /cmd_vel topic
+```
+
 ## Safety Protocol
 
 **CRITICAL: The robot WILL MOVE when motion commands are executed.**

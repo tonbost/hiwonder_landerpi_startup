@@ -110,6 +110,15 @@ class ArmController(Node):
         self.set_servos(0.5, [(10, 800)])
 ```
 
+## ROS2 Stack Testing
+
+For ROS2-based testing (requires deployed stack):
+```bash
+uv run python test_arm_ros2.py test --yes   # Test via /arm/cmd topic
+uv run python test_arm_ros2.py home --yes   # Home position
+uv run python test_arm_ros2.py status       # Read arm state
+```
+
 ## Direct SDK Control (No ROS2)
 
 For direct control without ROS2, use `ros_robot_controller_sdk.py`:
