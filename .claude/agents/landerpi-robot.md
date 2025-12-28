@@ -70,6 +70,32 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 6. **Deployment** - Setup scripts, Docker image management, SDK deployment
 7. **Troubleshooting** - Diagnose and resolve robot issues
 
+## Testing Modes
+
+LanderPi supports two testing approaches:
+
+### Direct SDK Tests (No ROS2)
+- Scripts: `test_chassis_direct.py`, `test_arm.py`, `test_lidar.py`, `test_cameradepth.py`
+- Use `ros_robot_controller_sdk.py` for direct serial communication
+- Self-contained, start their own Docker containers if needed
+- Good for: Quick testing, debugging, when ROS2 stack is not deployed
+
+### ROS2 Stack Tests (Integrated)
+- Scripts: `test_chassis_motion.py`, `test_arm_ros2.py`, `test_lidar_ros2.py`, `test_cameradepth_ros2.py`
+- Require persistent ROS2 stack: `deploy_ros2_stack.py deploy`
+- Use standard ROS2 topics via `docker exec landerpi-ros2`
+- Good for: Production use, integration testing, nav2/SLAM workflows
+
+### When to Use Which
+
+| Scenario | Use Direct | Use ROS2 |
+|----------|------------|----------|
+| Quick hardware verification | Yes | |
+| Debugging motor/servo issues | Yes | |
+| Integration with nav2/SLAM | | Yes |
+| Production deployment | | Yes |
+| Robot offline/recovery | Yes | |
+
 ## Safety Protocol
 
 **CRITICAL: The robot can MOVE. Always follow these safety rules:**
@@ -140,6 +166,11 @@ uv run python test_cameradepth.py check         # Check camera + Docker
 uv run python test_cameradepth.py start-driver  # Start camera driver
 uv run python test_cameradepth.py stream        # Read camera streams
 uv run python test_cameradepth.py validate      # Full validation
+
+# ROS2 Stack Tests (requires: deploy_ros2_stack.py deploy)
+uv run python test_arm_ros2.py test --yes        # Arm via ROS2
+uv run python test_lidar_ros2.py scan --samples 5  # Lidar via ROS2
+uv run python test_cameradepth_ros2.py stream    # Camera via ROS2
 
 # Deployment (load: core)
 uv run python setup_landerpi.py deploy
