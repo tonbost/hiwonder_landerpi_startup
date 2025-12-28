@@ -91,15 +91,53 @@ board.set_motor_speed([[1, 0.3], [2, -0.3], [3, 0.3], [4, -0.3]])
 board.set_motor_speed([[1, 0], [2, 0], [3, 0], [4, 0]])
 ```
 
-## ROS2 Control (via Docker)
+## ROS2 Control (Persistent Stack)
 
-For ROS2-based control (requires full HiWonder stack):
+The LanderPi uses a Docker Compose-based ROS2 stack that persists across reboots.
+
+### Deployment Commands
+
+| Command | Purpose |
+|---------|---------|
+| `uv run python deploy_ros2_stack.py deploy` | Deploy and start ROS2 stack |
+| `uv run python deploy_ros2_stack.py stop` | Stop ROS2 stack |
+| `uv run python deploy_ros2_stack.py logs` | View stack logs |
+| `uv run python deploy_ros2_stack.py logs -f` | Follow logs in real-time |
+
+### ROS2 Motion Test
 
 ```bash
-docker run --rm --privileged --network host -v /dev:/dev landerpi-ros2:latest \
-    bash -c 'source /opt/ros/humble/setup.bash && \
-    ros2 topic pub --once /ros_robot_controller/cmd_vel geometry_msgs/msg/Twist \
-    "{linear: {x: 0.15, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"'
+# Test via ROS2 (requires deployed stack)
+uv run python test_chassis_motion.py test
+```
+
+### Architecture
+
+```
+/cmd_vel (Twist) --> cmd_vel_bridge --> /ros_robot_controller/set_motor --> STM32
+```
+
+The `cmd_vel_bridge` node:
+- Subscribes to standard `/cmd_vel` topic
+- Performs mecanum kinematics calculations
+- Publishes to `/ros_robot_controller/set_motor`
+- Includes 500ms watchdog (auto-stop if no commands)
+
+### Manual ROS2 Commands
+
+```bash
+# Quick test via Docker exec
+docker exec landerpi-ros2 bash -c '
+  source /opt/ros/humble/setup.bash &&
+  source /ros2_ws/install/setup.bash &&
+  ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+    "{linear: {x: 0.15, y: 0.0, z: 0.0}, angular: {z: 0.0}}"'
+
+# Check topics
+docker exec landerpi-ros2 bash -c '
+  source /opt/ros/humble/setup.bash &&
+  source /ros2_ws/install/setup.bash &&
+  ros2 topic list'
 ```
 
 **Twist message mapping:**
@@ -109,6 +147,22 @@ docker run --rm --privileged --network host -v /dev:/dev landerpi-ros2:latest \
 - `linear.y < 0`: Strafe right (Mecanum only)
 - `angular.z > 0`: Turn left (CCW)
 - `angular.z < 0`: Turn right (CW)
+
+### Persistence
+
+The stack uses `restart: unless-stopped` in Docker Compose, so it:
+- Starts automatically on boot
+- Survives reboots
+- Only stops when explicitly stopped with `docker compose down`
+
+### Configuration
+
+Robot geometry parameters in `config/robot_params.yaml`:
+- `wheel_radius`: 0.05m (50mm)
+- `wheel_base`: 0.15m (front-to-back)
+- `track_width`: 0.15m (left-to-right)
+- `max_wheel_rps`: 3.0 (safety limit)
+- `cmd_vel_timeout`: 0.5s (watchdog)
 
 ## Motion Parameters
 

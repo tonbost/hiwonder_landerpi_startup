@@ -105,10 +105,19 @@ Load robot credentials from `config.json`:
 uv run python checkLanderPi.py check      # Full health check
 uv run python checkLanderPi.py quick      # Quick check
 
-# Motion (load: core + motion) - ROBOT WILL MOVE!
+# ROS2 Stack Deployment (load: core + motion)
+uv run python deploy_ros2_stack.py deploy  # Deploy and start persistent ROS2 stack
+uv run python deploy_ros2_stack.py stop    # Stop ROS2 stack
+uv run python deploy_ros2_stack.py logs    # View stack logs
+uv run python deploy_ros2_stack.py logs -f # Follow logs
+
+# Motion - Direct SDK (load: core + motion) - ROBOT WILL MOVE!
 uv run python test_chassis_direct.py test --direction all --duration 2 --yes
 uv run python test_chassis_direct.py stop  # Emergency stop
 uv run python test_chassis_direct.py status
+
+# Motion - ROS2 (load: core + motion, requires deployed stack) - ROBOT WILL MOVE!
+uv run python test_chassis_motion.py test  # Test via /cmd_vel topic
 
 # Arm control (load: core + arm) - ARM WILL MOVE!
 uv run python test_arm.py test --yes       # Full arm test
