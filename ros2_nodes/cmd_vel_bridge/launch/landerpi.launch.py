@@ -9,10 +9,12 @@ Launches all LanderPi nodes:
 - camera_driver - Aurora 930 (if workspace available)
 """
 
+import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.actions import DeclareLaunchArgument, LogInfo, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 
@@ -30,9 +32,13 @@ def generate_launch_description():
         description='Enable arm controller'
     )
 
+    # Auto-detect camera driver availability
+    camera_launch_path = '/deptrum_ws/install/deptrum-ros-driver-aurora930/share/deptrum-ros-driver-aurora930/launch/aurora930_launch.py'
+    camera_available = os.path.exists(camera_launch_path)
+
     enable_camera_arg = DeclareLaunchArgument(
         'enable_camera',
-        default_value='false',
+        default_value='true' if camera_available else 'false',
         description='Enable camera driver (requires deptrum_ws)'
     )
 
@@ -87,6 +93,12 @@ def generate_launch_description():
         }],
     )
 
+    # Camera driver (Aurora 930) - include vendor launch file
+    camera_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(camera_launch_path),
+        condition=IfCondition(LaunchConfiguration('enable_camera')),
+    ) if camera_available else LogInfo(msg='Camera driver not available (deptrum_ws not found)')
+
     return LaunchDescription([
         # Arguments
         enable_lidar_arg,
@@ -101,6 +113,7 @@ def generate_launch_description():
         cmd_vel_bridge_node,
         arm_controller_node,
         lidar_driver_node,
+        camera_launch,
 
         LogInfo(msg='LanderPi ROS2 stack launched'),
     ])
