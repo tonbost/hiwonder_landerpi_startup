@@ -1,32 +1,106 @@
-#!/usr/bin/env python3
-"""Launch file for LanderPi ROS2 stack."""
+"""
+LanderPi unified ROS2 launch file.
 
-import os
+Launches all LanderPi nodes:
+- ros_robot_controller (vendor) - STM32 communication
+- cmd_vel_bridge - Twist to motor commands
+- arm_controller - Arm servo control
+- lidar_driver - LD19/MS200 lidar
+- camera_driver - Aurora 930 (if workspace available)
+"""
+
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    # Config file path (mounted from host)
-    config_file = '/ros2_ws/config/robot_params.yaml'
+    # Declare arguments
+    enable_lidar_arg = DeclareLaunchArgument(
+        'enable_lidar',
+        default_value='true',
+        description='Enable lidar driver'
+    )
+
+    enable_arm_arg = DeclareLaunchArgument(
+        'enable_arm',
+        default_value='true',
+        description='Enable arm controller'
+    )
+
+    enable_camera_arg = DeclareLaunchArgument(
+        'enable_camera',
+        default_value='false',
+        description='Enable camera driver (requires deptrum_ws)'
+    )
+
+    # Vendor node: ros_robot_controller
+    ros_robot_controller_node = Node(
+        package='ros_robot_controller',
+        executable='ros_robot_controller',
+        name='ros_robot_controller',
+        output='screen',
+        parameters=[{
+            'port': '/dev/ttyAMA0',
+            'baudrate': 1000000,
+        }],
+    )
+
+    # cmd_vel_bridge node
+    cmd_vel_bridge_node = Node(
+        package='cmd_vel_bridge',
+        executable='cmd_vel_bridge_node',
+        name='cmd_vel_bridge',
+        output='screen',
+        parameters=[{
+            'wheel_radius': 0.05,
+            'wheel_base': 0.15,
+            'track_width': 0.15,
+            'max_wheel_rps': 3.0,
+            'cmd_vel_timeout': 0.5,
+        }],
+    )
+
+    # arm_controller node
+    arm_controller_node = Node(
+        package='arm_controller',
+        executable='arm_controller_node',
+        name='arm_controller',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_arm')),
+    )
+
+    # lidar_driver node
+    lidar_driver_node = Node(
+        package='lidar_driver',
+        executable='lidar_driver_node',
+        name='lidar_driver',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_lidar')),
+        parameters=[{
+            'port': '/dev/ttyUSB0',
+            'port_fallback': '/dev/ttyUSB1',
+            'baudrate': 230400,
+            'frame_id': 'laser_frame',
+        }],
+    )
 
     return LaunchDescription([
-        # Motor controller node (from ros_robot_controller package)
-        Node(
-            package='ros_robot_controller',
-            executable='ros_robot_controller',
-            name='ros_robot_controller',
-            output='screen',
-            parameters=[{'imu_frame': 'imu_link'}],
-        ),
+        # Arguments
+        enable_lidar_arg,
+        enable_arm_arg,
+        enable_camera_arg,
 
-        # cmd_vel bridge node
-        Node(
-            package='cmd_vel_bridge',
-            executable='cmd_vel_bridge',
-            name='cmd_vel_bridge',
-            output='screen',
-            parameters=[config_file],
-        ),
+        # Log startup
+        LogInfo(msg='Starting LanderPi ROS2 stack...'),
+
+        # Nodes
+        ros_robot_controller_node,
+        cmd_vel_bridge_node,
+        arm_controller_node,
+        lidar_driver_node,
+
+        LogInfo(msg='LanderPi ROS2 stack launched'),
     ])
