@@ -1,0 +1,24 @@
+# LanderPi Robot Parameters
+# Mecanum wheel geometry - adjust after calibration
+
+cmd_vel_bridge:
+  ros__parameters:
+    # Wheel geometry (meters)
+    wheel_radius: 0.05        # 50mm - measure actual wheel
+    wheel_base: 0.15          # 150mm - front to back axle distance
+    track_width: 0.15         # 150mm - left to right wheel distance
+
+    # Motor configuration
+    motor_ids:
+      front_left: 1
+      back_left: 2
+      front_right: 3
+      back_right: 4
+
+    # Safety limits
+    max_wheel_rps: 3.0        # Max rotations per second
+    cmd_vel_timeout: 0.5      # Stop if no command for 500ms
+
+    # Topic names
+    cmd_vel_topic: "/cmd_vel"
+    motor_topic: "/ros_robot_controller/set_motor"
