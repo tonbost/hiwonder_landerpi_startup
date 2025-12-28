@@ -51,9 +51,13 @@ def twist_to_wheel_speeds(
     Returns:
         WheelSpeeds with RPS for each wheel
 
-    Mecanum kinematics (standard configuration with rollers at 45 degrees):
-        FL = (vx - vy - (lx + ly) * wz) / r
-        BL = (vx + vy - (lx + ly) * wz) / r
+    LanderPi motor configuration:
+        - Left motors (M1, M2): negative = forward, positive = backward
+        - Right motors (M3, M4): positive = forward, negative = backward
+
+    Mecanum kinematics with LanderPi motor sign convention:
+        FL = -(vx - vy - (lx + ly) * wz) / r  (negated for left side)
+        BL = -(vx + vy - (lx + ly) * wz) / r  (negated for left side)
         FR = (vx + vy + (lx + ly) * wz) / r
         BR = (vx - vy + (lx + ly) * wz) / r
     """
@@ -61,8 +65,9 @@ def twist_to_wheel_speeds(
     k = geometry.lx + geometry.ly  # Combined geometry factor
 
     # Calculate wheel angular velocities (rad/s)
-    fl_rad = (vx - vy - k * wz) / r
-    bl_rad = (vx + vy - k * wz) / r
+    # Left side negated to match LanderPi motor convention
+    fl_rad = -(vx - vy - k * wz) / r
+    bl_rad = -(vx + vy - k * wz) / r
     fr_rad = (vx + vy + k * wz) / r
     br_rad = (vx - vy + k * wz) / r
 
