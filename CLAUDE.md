@@ -88,6 +88,12 @@ uv run python test_arm.py servo-test --yes  # Test all servos (1-5, 10)
 
 # Emergency stop (disable all arm servos)
 uv run python test_arm.py stop
+
+# Deploy persistent ROS2 stack (uses config.json, survives reboots)
+uv run python deploy_ros2_stack.py deploy    # Upload files and start stack
+uv run python deploy_ros2_stack.py stop      # Stop the ROS2 stack
+uv run python deploy_ros2_stack.py logs      # View container logs
+uv run python deploy_ros2_stack.py logs -f   # Follow logs in real-time
 ```
 
 ## Architecture
@@ -113,9 +119,15 @@ uv run python test_arm.py stop
 
 **`test_chassis_motion.py`** - ROS2-based chassis motion test
 - `ChassisMotionTest` class handles SSH + ROS2 velocity commands
-- Requires HiWonder system image with ros_robot_controller installed
-- Uses `/ros_robot_controller/cmd_vel` topic with `geometry_msgs/msg/Twist`
+- Requires deployed ROS2 stack (deploy_ros2_stack.py)
+- Uses `/cmd_vel` topic with `geometry_msgs/msg/Twist`
 - Commands: `test` (move robot), `stop` (emergency stop)
+
+**`deploy_ros2_stack.py`** - ROS2 stack deployment (persistent across reboots)
+- Uploads `ros2_nodes/`, `docker/`, `config/`, `drivers/` to `~/landerpi/` on robot
+- Starts Docker Compose stack with `restart: unless-stopped`
+- `cmd_vel_bridge` node converts `/cmd_vel` (Twist) to `/ros_robot_controller/set_motor`
+- Commands: `deploy` (upload + start), `stop` (stop stack), `logs` (view logs)
 
 **`test_lidar.py`** - Lidar validation test (Docker-based ROS2)
 - Tests MS200/LD19 lidar connectivity and functionality via Docker
