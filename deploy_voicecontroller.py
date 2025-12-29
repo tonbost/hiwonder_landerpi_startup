@@ -174,6 +174,18 @@ def configure():
         conn.run(f"echo 'set -a; source {env_file} 2>/dev/null; set +a' >> ~/.bashrc", hide=True)
         console.print("[green]Added .env sourcing to .bashrc[/green]")
 
+    # Create audio directory and beep sound
+    conn.run("mkdir -p ~/audio", hide=True)
+
+    # Generate beep using sox if available, otherwise use simple approach
+    result = conn.run("which sox", hide=True, warn=True)
+    if result.return_code == 0:
+        conn.run("sox -n ~/audio/beep.wav synth 0.1 sine 880 vol 0.5", hide=True)
+        console.print("[green]Generated activation beep sound[/green]")
+    else:
+        console.print("[yellow]sox not installed - beep sound skipped[/yellow]")
+        console.print("  Install with: sudo apt install sox")
+
 
 @app.command("install-service")
 def install_service():
