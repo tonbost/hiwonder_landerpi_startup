@@ -676,21 +676,33 @@ def listen(
 
 @app.command()
 def loop(
-    duration: float = typer.Option(3.0, "--duration", "-d", help="Recording duration per cycle"),
+    duration: float = typer.Option(4.0, "--duration", "-d", help="Recording duration per command"),
     pause: float = typer.Option(0.5, "--pause", "-p", help="Pause between recordings"),
+    wake_word: bool = typer.Option(False, "--wake-word", "-w", help="Require 'Hey TARS' to activate"),
 ):
     """Continuous voice command loop."""
-    console.print(Panel("Continuous Voice Control", style="bold green"))
-    console.print("[cyan]Say 'stop listening' or press Ctrl+C to exit[/cyan]\n")
+    console.print(Panel("TARS Voice Control", style="bold green"))
+
+    if wake_word:
+        console.print("[cyan]Wake word mode: Say 'Hey TARS' to activate[/cyan]")
+    else:
+        console.print("[cyan]Continuous mode: Always listening[/cyan]")
+
+    console.print("[dim]Say 'stop listening' or 'goodbye' to exit[/dim]\n")
 
     # Pre-load Whisper model
     get_whisper_model()
 
     try:
         while True:
+            # Wake word mode: wait for "Hey TARS"
+            if wake_word:
+                if not wait_for_wake_word("hey tars"):
+                    continue
+
             console.print("\n" + "─" * 40)
 
-            # Record
+            # Record command
             audio_path = record_audio(duration=duration)
             if not audio_path:
                 time.sleep(pause)
@@ -704,8 +716,9 @@ def loop(
                     continue
 
                 # Check for exit command
-                if "stop listening" in text.lower() or "exit" in text.lower():
-                    speak_response("Voice control disabled, sir. Standing by.")
+                text_lower = text.lower()
+                if "stop listening" in text_lower or "goodbye" in text_lower or "exit" in text_lower:
+                    speak_response("Voice control offline. Goodbye, sir.")
                     break
 
                 # Generate and execute
@@ -724,7 +737,9 @@ def loop(
             time.sleep(pause)
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Stopping...[/yellow]")
+        console.print("\n[yellow]Interrupted[/yellow]")
+        # Stop any active follow mode
+        toggle_follow_mode(False)
         speak_response("Voice control offline.")
 
 
