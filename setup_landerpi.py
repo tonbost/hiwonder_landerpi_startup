@@ -119,26 +119,6 @@ class RemoteSetupManager:
         cmd = f"echo '{content}' | tee -a {filepath}"
         self.run_remote(cmd, f"Appending to {filepath}", sudo=sudo)
 
-    def upload_file(self, local_path: str, remote_path: str, description: str):
-        """Upload a file to the remote host."""
-        if self.dry_run:
-            self.console.print(f"[yellow][DRY RUN] Upload {local_path} -> {remote_path}[/yellow]")
-            return True
-
-        local_file = Path(local_path)
-        if not local_file.exists():
-            self.console.print(f"[red]✗ Local file not found:[/red] {local_path}")
-            return False
-
-        self.console.print(f"[bold blue]Uploading:[/bold blue] {description}...")
-        try:
-            self.conn.put(str(local_file), remote_path)
-            self.console.print(f"[green]✓ Uploaded:[/green] {description}")
-            return True
-        except Exception as e:
-            self.console.print(f"[red]✗ Upload failed:[/red] {e}")
-            return False
-
 
 @app.command()
 def connect(
@@ -206,57 +186,74 @@ def deploy(
                 mgr.conn.run(f"test -f {config_file}", hide=True)
             except UnexpectedExit:
                 config_file = "/boot/config.txt"
-
+        
         mgr.append_to_remote_file(config_file, "dtparam=i2c_arm=on", sudo=True)
         mgr.append_to_remote_file(config_file, "dtparam=spi=on", sudo=True)
         mgr.mark_step_done(step)
 
-    # 2b. Peripheral Access (user groups and vcgencmd)
-    step = "peripheral_access"
+    # 3. Docker & ROS2
+    if not skip_docker:
+        step = "docker_ros2"
+        if mgr.is_step_done(step):
+            console.print(f"[dim]✓ Skipping {step}[/dim]")
+        else:
+            console.rule("[bold]Step 3: Docker & ROS2[/bold]")
+            # Install Docker
+            try:
+                if dry_run: raise UnexpectedExit(None)
+                mgr.conn.run("docker --version", hide=True)
+                console.print("[green]Docker already installed.[/green]")
+            except UnexpectedExit:
+                mgr.run_remote("curl -fsSL https://get.docker.com | sh", "Installing Docker")
+                mgr.run_remote(f"usermod -aG docker {user}", f"Adding {user} to docker group", sudo=True)
+            
+            # Pull Image
+            mgr.run_remote("docker pull ros:humble-ros-base", "Pulling ROS2 Humble image", sudo=True)
+            
+            # Create Workspace
+            ws_path = f"/home/{user}/landerpi_ros"
+            mgr.run_remote(f"mkdir -p {ws_path}/src", "Creating workspace")
+            
+            # Dockerfile
+            dockerfile = """FROM ros:humble-ros-base
+RUN apt-get update && apt-get install -y \\
+    python3-pip \\
+    python3-serial \\
+    python3-smbus \\
+    i2c-tools \\
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /ros2_ws
+CMD ["bash"]
+"""
+            # Write Dockerfile remotely
+            if not dry_run:
+                from io import StringIO
+                mgr.conn.put(StringIO(dockerfile), f"{ws_path}/Dockerfile")
+            else:
+                console.print("[yellow][DRY RUN] Upload Dockerfile[/yellow]")
+
+            mgr.run_remote(f"cd {ws_path} && docker build -t landerpi-ros2 .", "Building Custom Docker Image", sudo=True)
+            mgr.mark_step_done(step)
+
+    # 4. Remote Access
+    step = "remote_access"
     if mgr.is_step_done(step):
         console.print(f"[dim]✓ Skipping {step}[/dim]")
     else:
-        console.rule("[bold]Step 2b: Peripheral Access Configuration[/bold]")
-
-        # Add user to required groups for hardware access
-        # dialout: serial ports (lidar, motor controllers)
-        # audio: sound devices (USB speakers)
-        # video: video devices and vcgencmd
-        groups_to_add = ["dialout", "audio", "video", "i2c", "gpio"]
-        for group in groups_to_add:
-            mgr.run_remote(
-                f"usermod -aG {group} {user}",
-                f"Adding {user} to {group} group",
-                sudo=True,
-                warn=True  # Don't fail if group doesn't exist
-            )
-
-        # Fix vcgencmd access - create /dev/vcio device if missing
-        mgr.run_remote(
-            "test -e /dev/vcio || mknod /dev/vcio c 100 0",
-            "Creating vcio device for vcgencmd",
-            sudo=True,
-            warn=True
-        )
-        mgr.run_remote("chmod 666 /dev/vcio", "Setting vcio permissions", sudo=True, warn=True)
-
-        # Create udev rule for vcio to persist across reboots
-        vcio_rule = 'KERNEL=="vcio", MODE="0666"'
-        mgr.run_remote(
-            f"echo '{vcio_rule}' > /etc/udev/rules.d/99-vcio.rules",
-            "Creating udev rule for vcio",
-            sudo=True
-        )
-
+        console.rule("[bold]Step 4: Remote Access[/bold]")
+        mgr.run_remote("systemctl enable ssh", "Enabling SSH", sudo=True)
+        if Confirm.ask("Install VNC Server?", default=False) or dry_run:
+             mgr.run_remote("apt install -y tightvncserver", "Installing VNC", sudo=True)
         mgr.mark_step_done(step)
 
-    # 2c. Motion Controller SDK
-    step = "motion_controller"
-    if mgr.is_step_done(step):
-        console.print(f"[dim]✓ Skipping {step}[/dim]")
-    else:
-        console.rule("[bold]Step 2c: Motion Controller SDK[/bold]")
+    console.rule("[bold]Setup Complete[/bold]")
+    console.print(f"[green]Setup successfully deployed to {host}.[/green]")
+    console.print("[yellow]A reboot is recommended.[/yellow]")
+    if Confirm.ask("Reboot remote host now?", default=False):
+        mgr.run_remote("reboot", "Rebooting remote host", sudo=True, warn=True)
 
+if __name__ == "__main__":
+    app()
         # Upload ros_robot_controller SDK for direct motor control
         script_dir = Path(__file__).parent
         sdk_file = script_dir / "drivers" / "ros_robot_controller-ros2" / "src" / "ros_robot_controller" / "ros_robot_controller" / "ros_robot_controller_sdk.py"

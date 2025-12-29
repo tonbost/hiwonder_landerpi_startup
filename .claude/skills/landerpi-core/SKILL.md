@@ -31,6 +31,8 @@ Load credentials from `config.json` in the project root:
 | Connect Test | `uv run python setup_landerpi.py connect` | Test SSH connection |
 | Deploy | `uv run python setup_landerpi.py deploy` | Full setup deployment |
 | Robot Status | `uv run python test_chassis_direct.py status` | Battery/IMU status |
+| Voice Deploy | `uv run python deploy_voicecontroller.py deploy` | Deploy TARS voice control |
+| Voice Test | `uv run python deploy_voicecontroller.py test` | Test voice components |
 
 All tools read credentials from `config.json` automatically.
 
@@ -159,6 +161,18 @@ The persistent ROS2 stack runs all drivers in a single Docker Compose service.
 | `arm_controller` | `/arm/cmd`, `/arm/state` | Arm servo control |
 | `lidar_driver` | `/scan` | Lidar scanning |
 | `camera_driver` | `/aurora/*` | Depth camera (vendor) |
+
+### Voice Control (TARS)
+
+Voice control runs as a separate systemd service (`tars-voice`) that uses the ROS2 stack for motion.
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Voice Controller | `~/robot_voicecontroller.py` | ASR + LLM + TTS + ROS2 control |
+| Systemd Service | `/etc/systemd/system/tars-voice.service` | Auto-start on boot |
+| Audio | WonderEcho Pro (card 1) | Microphone + speaker |
+
+Voice control commands robot via `docker exec landerpi-ros2 ros2 topic pub /controller/cmd_vel`.
 
 ### Deployment
 
