@@ -218,6 +218,70 @@ def play_audio(audio_path: str) -> bool:
 
 
 # ============================================================================
+# Wake Word Detection
+# ============================================================================
+
+ACTIVATION_SOUND = Path.home() / "audio" / "beep.wav"
+
+
+def play_activation_sound():
+    """Play short beep to confirm wake word detected."""
+    if ACTIVATION_SOUND.exists():
+        try:
+            subprocess.run(["aplay", "-q", str(ACTIVATION_SOUND)], timeout=2)
+        except:
+            pass
+    else:
+        # Fallback: print message
+        console.print("[bold green]* ACTIVATED *[/bold green]")
+
+
+def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] = None) -> bool:
+    """
+    Listen continuously for wake phrase.
+
+    Args:
+        wake_phrase: Phrase to listen for (default: "hey tars")
+        timeout: Optional timeout in seconds (None = forever)
+
+    Returns:
+        True if wake word detected, False if timeout
+    """
+    console.print(f"[dim]Listening for '{wake_phrase}'...[/dim]")
+    start_time = time.time()
+
+    while True:
+        # Check timeout
+        if timeout and (time.time() - start_time) > timeout:
+            return False
+
+        # Record short clip
+        audio_path = record_audio(duration=1.5)
+        if not audio_path:
+            time.sleep(0.1)
+            continue
+
+        try:
+            # Quick transcription
+            text = transcribe_audio(audio_path)
+
+            if text and wake_phrase in text.lower():
+                play_activation_sound()
+                console.print("[bold green]Wake word detected![/bold green]")
+                return True
+
+        finally:
+            # Cleanup temp file
+            try:
+                os.remove(audio_path)
+            except:
+                pass
+
+        # Small pause
+        time.sleep(0.05)
+
+
+# ============================================================================
 # Speech-to-Text (Local Whisper)
 # ============================================================================
 
