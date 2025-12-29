@@ -305,29 +305,23 @@ def generate_robot_command(text: str) -> Optional[dict]:
 
 
 # ============================================================================
-# Robot Control (Direct SDK)
+# Robot Control (ROS2-based)
 # ============================================================================
 
-_board = None
-
-def get_board():
-    """Get robot controller board (cached)."""
-    global _board
-    if _board is None:
-        # Add SDK to path
-        sys.path.insert(0, str(SDK_PATH))
-        try:
-            from ros_robot_controller_sdk import Board
-            _board = Board()
-            console.print("[green]Robot controller connected[/green]")
-        except ImportError:
-            console.print("[red]ros_robot_controller_sdk not found[/red]")
-            raise
-    return _board
+# Movement command mappings
+MOVEMENT_COMMANDS = {
+    "forward":      {"linear_x": 0.3,  "linear_y": 0.0,  "angular_z": 0.0},
+    "backward":     {"linear_x": -0.3, "linear_y": 0.0,  "angular_z": 0.0},
+    "turn_left":    {"linear_x": 0.0,  "linear_y": 0.0,  "angular_z": 0.5},
+    "turn_right":   {"linear_x": 0.0,  "linear_y": 0.0,  "angular_z": -0.5},
+    "strafe_left":  {"linear_x": 0.0,  "linear_y": 0.3,  "angular_z": 0.0},
+    "strafe_right": {"linear_x": 0.0,  "linear_y": -0.3, "angular_z": 0.0},
+    "stop":         {"linear_x": 0.0,  "linear_y": 0.0,  "angular_z": 0.0},
+}
 
 
 def execute_robot_command(command: dict) -> bool:
-    """Execute robot command via direct SDK."""
+    """Execute robot command via ROS2."""
     action = command.get("action", "chat")
     cmd = command.get("command", "none")
     params = command.get("params", {})
@@ -335,57 +329,26 @@ def execute_robot_command(command: dict) -> bool:
     if action == "chat" or cmd == "none":
         return True  # No physical action needed
 
-    speed = params.get("speed", 0.3)
-    duration = params.get("duration", 2.0)
-
     console.print(f"[yellow]Executing: {action}/{cmd}[/yellow]")
 
-    try:
-        board = get_board()
+    # Get duration and speed multiplier from params
+    duration = params.get("duration", 2.0)
+    speed = params.get("speed", 0.3)
 
-        # Motor mapping for mecanum wheels:
-        # M1=front-left, M2=back-left, M3=front-right, M4=back-right
-        # Forward: left negative, right positive
+    if action == "movement" and cmd in MOVEMENT_COMMANDS:
+        mapping = MOVEMENT_COMMANDS[cmd]
+        # Apply speed multiplier
+        linear_x = mapping["linear_x"] * (speed / 0.3) if mapping["linear_x"] != 0 else 0
+        linear_y = mapping["linear_y"] * (speed / 0.3) if mapping["linear_y"] != 0 else 0
+        angular_z = mapping["angular_z"] * (speed / 0.3) if mapping["angular_z"] != 0 else 0
 
-        motor_configs = {
-            "forward": [[-speed, -speed, speed, speed]],
-            "backward": [[speed, speed, -speed, -speed]],
-            "turn_left": [[speed, speed, speed, speed]],
-            "turn_right": [[-speed, -speed, -speed, -speed]],
-            "strafe_left": [[speed, -speed, speed, -speed]],
-            "strafe_right": [[-speed, speed, -speed, speed]],
-            "stop": [[0, 0, 0, 0]],
-        }
+        return execute_ros2_cmd_vel(linear_x, linear_y, angular_z, duration)
 
-        if cmd in motor_configs:
-            speeds = motor_configs[cmd][0]
-            motor_cmd = [[1, speeds[0]], [2, speeds[1]], [3, speeds[2]], [4, speeds[3]]]
+    elif action == "stop":
+        return execute_ros2_cmd_vel(0.0, 0.0, 0.0, 0.1)
 
-            board.set_motor_speed(motor_cmd)
-
-            if cmd != "stop":
-                time.sleep(duration)
-                board.set_motor_speed([[1, 0], [2, 0], [3, 0], [4, 0]])
-
-            console.print("[green]Movement complete[/green]")
-            return True
-
-        elif action == "arm":
-            # Arm control if available
-            if cmd == "home":
-                # Home position: all servos at 500
-                for servo_id in [1, 2, 3, 4, 5]:
-                    board.pwm_servo_set_position(0.5, [[servo_id, 500]])
-                    time.sleep(0.1)
-                console.print("[green]Arm homed[/green]")
-                return True
-
-        console.print(f"[yellow]Unknown command: {cmd}[/yellow]")
-        return True
-
-    except Exception as e:
-        console.print(f"[red]Execution error: {e}[/red]")
-        return False
+    console.print(f"[yellow]Unknown action: {action}/{cmd}[/yellow]")
+    return True
 
 
 # ============================================================================
