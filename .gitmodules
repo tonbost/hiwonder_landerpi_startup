@@ -1,3 +1,9 @@
 [submodule "reference/LanderPi"]
 	path = reference/LanderPi
 	url = git@github.com:tonbost/LanderPi.git
+[submodule "drivers/yolo_ros"]
+	path = drivers/yolo_ros
+	url = https://github.com/mgonzs13/yolo_ros
+[submodule "docs/LanderPi"]
+	path = docs/LanderPi
+	url = https://github.com/Hiwonder-docs/LanderPi
