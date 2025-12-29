@@ -305,6 +305,38 @@ def generate_robot_command(text: str) -> Optional[dict]:
 
 
 # ============================================================================
+# Compound Commands
+# ============================================================================
+
+def execute_compound_command(cmd: str, params: dict) -> bool:
+    """Execute compound movement sequences."""
+    console.print(f"[yellow]Executing compound: {cmd}[/yellow]")
+
+    if cmd == "look_around":
+        # Rotate 360 degrees slowly (~7 seconds at 0.9 rad/s)
+        return execute_ros2_cmd_vel(0.0, 0.0, 0.9, 7.0)
+
+    elif cmd == "patrol":
+        # Square pattern: forward, turn right, repeat 4x
+        for i in range(4):
+            console.print(f"[cyan]Patrol leg {i+1}/4[/cyan]")
+            if not execute_ros2_cmd_vel(0.3, 0.0, 0.0, 2.0):  # Forward 2s
+                return False
+            time.sleep(0.5)
+            if not execute_ros2_cmd_vel(0.0, 0.0, -0.5, 3.14):  # Turn right 90deg
+                return False
+            time.sleep(0.5)
+        return True
+
+    elif cmd == "come_here":
+        # Simple: move forward toward user (future: use sound angle)
+        return execute_ros2_cmd_vel(0.3, 0.0, 0.0, 3.0)
+
+    console.print(f"[yellow]Unknown compound command: {cmd}[/yellow]")
+    return False
+
+
+# ============================================================================
 # Robot Control (ROS2-based)
 # ============================================================================
 
@@ -346,6 +378,9 @@ def execute_robot_command(command: dict) -> bool:
 
     elif action == "stop":
         return execute_ros2_cmd_vel(0.0, 0.0, 0.0, 0.1)
+
+    elif action == "compound":
+        return execute_compound_command(cmd, params)
 
     console.print(f"[yellow]Unknown action: {action}/{cmd}[/yellow]")
     return True
