@@ -693,6 +693,12 @@ def loop(
     # Pre-load Whisper model
     get_whisper_model()
 
+    # Startup announcement
+    if wake_word:
+        speak_response("TARS online. Say Hey TARS to activate.")
+    else:
+        speak_response("TARS online. Listening.")
+
     try:
         while True:
             # Wake word mode: wait for "Hey TARS"
