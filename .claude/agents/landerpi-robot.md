@@ -1,6 +1,6 @@
 ---
 name: landerpi-robot
-description: Dedicated agent for LanderPi robot programming, control, and diagnostics. Use when working with HiWonder LanderPi robots on Raspberry Pi 5 - including motion control, arm control, lidar operations, depth camera streaming, system health checks, deployment, and troubleshooting. Automatically loads appropriate landerpi skills.
+description: Dedicated agent for LanderPi robot programming, control, and diagnostics. Use when working with HiWonder LanderPi robots on Raspberry Pi 5 - including motion control, arm control, lidar operations, depth camera streaming, voice control ("Hey TARS"), system health checks, deployment, and troubleshooting. Automatically loads appropriate landerpi skills.
 tools: Bash, Read, Write, Edit, Grep, Glob, mcp__ssh-mcp-server__execute_command, mcp__ssh-mcp-server__get_system_info, mcp__ssh-mcp-server__list_files, mcp__ssh-mcp-server__read_file, mcp__ssh-mcp-server__find_files, mcp__ssh-mcp-server__list_processes
 ---
 
@@ -24,6 +24,7 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 | Depth camera, RGB/depth/point cloud | `landerpi-core` → `landerpi-camera` |
 | Pick and place operations | `landerpi-core` → `landerpi-motion` → `landerpi-arm` |
 | Vision-guided manipulation | `landerpi-core` → `landerpi-camera` → `landerpi-arm` |
+| Voice control deployment/testing | `landerpi-core` (uses deploy_voicecontroller.py) |
 | Full robot operations | All five skills |
 
 ### Skill Descriptions
@@ -67,8 +68,9 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 3. **Arm Control** - 5-DOF arm servo positioning, gripper operations, kinematics
 4. **Lidar Operations** - Driver management, scan data, autonomous modes
 5. **Depth Camera** - Aurora 930 streaming, RGB/depth/point cloud data
-6. **Deployment** - Setup scripts, Docker image management, SDK deployment
-7. **Troubleshooting** - Diagnose and resolve robot issues
+6. **Voice Control** - TARS voice assistant deployment, testing, service management
+7. **Deployment** - Setup scripts, Docker image management, SDK deployment
+8. **Troubleshooting** - Diagnose and resolve robot issues
 
 ## Testing Modes
 
@@ -124,6 +126,57 @@ Load robot credentials from `config.json`:
 }
 ```
 
+## Voice Control (TARS)
+
+TARS is an AI voice assistant that controls the robot using natural language.
+
+### Architecture
+```
+WonderEcho Pro (mic) → faster-whisper (ASR) → Bedrock Claude Haiku (LLM)
+                                                        ↓
+                                               JSON command
+                                                        ↓
+                    docker exec landerpi-ros2 ros2 topic pub /controller/cmd_vel
+                                                        ↓
+                              ElevenLabs TTS → WonderEcho Pro (speaker)
+```
+
+### Supported Voice Commands
+
+| Category | Commands |
+|----------|----------|
+| Movement | forward, backward, turn_left, turn_right, strafe_left, strafe_right, stop |
+| Compound | look_around (360° scan), patrol (square pattern), come_here |
+| Modes | follow_me (toggle continuous tracking) |
+
+### Deployment & Service Management
+
+```bash
+# Deploy voice control (load: core)
+uv run python deploy_voicecontroller.py deploy   # Full deployment
+uv run python deploy_voicecontroller.py upload   # Script only
+uv run python deploy_voicecontroller.py install-service  # Install systemd
+
+# Service management (on robot)
+sudo systemctl start tars-voice    # Start
+sudo systemctl stop tars-voice     # Stop
+sudo systemctl status tars-voice   # Status
+journalctl -u tars-voice -f        # Logs
+```
+
+### Prerequisites
+- WonderEcho Pro audio module connected
+- AWS credentials configured (`aws configure`)
+- ElevenLabs API key in `~/.env`
+- ROS2 stack deployed (`deploy_ros2_stack.py deploy`)
+
+### Wake Word Mode
+1. On boot, TARS announces "TARS online. Say Hey TARS to activate."
+2. Say "Hey TARS" - beep confirms activation
+3. Give command (e.g., "go forward", "patrol the area")
+4. TARS executes and responds via TTS
+5. Returns to listening for wake word
+
 ## Quick Reference Commands
 
 ```bash
@@ -171,6 +224,11 @@ uv run python test_cameradepth.py validate      # Full validation
 uv run python test_arm_ros2.py test --yes        # Arm via ROS2
 uv run python test_lidar_ros2.py scan --samples 5  # Lidar via ROS2
 uv run python test_cameradepth_ros2.py stream    # Camera via ROS2
+
+# Voice Control (load: core, requires ROS2 stack)
+uv run python deploy_voicecontroller.py deploy    # Full deployment
+uv run python deploy_voicecontroller.py upload    # Upload script only
+uv run python deploy_voicecontroller.py test      # Run check on robot
 
 # Deployment (load: core)
 uv run python setup_landerpi.py deploy

@@ -106,6 +106,26 @@ uv run python test_lidar_ros2.py check           # Lidar status
 uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
 uv run python test_cameradepth_ros2.py check     # Camera topics
 uv run python test_cameradepth_ros2.py stream    # Read streams
+
+# Voice Control (runs ON the robot, requires WonderEcho Pro + ROS2 stack)
+uv run python deploy_voicecontroller.py deploy   # Full deployment (script + deps + service)
+uv run python deploy_voicecontroller.py upload   # Upload script only
+uv run python deploy_voicecontroller.py install-service  # Install systemd service
+uv run python deploy_voicecontroller.py test     # Run check on robot
+
+# Systemd service management (auto-starts on boot):
+# sudo systemctl start tars-voice    # Start voice control
+# sudo systemctl stop tars-voice     # Stop voice control
+# sudo systemctl status tars-voice   # Check status
+# journalctl -u tars-voice -f        # View logs
+
+# On the robot directly:
+# python3 ~/robot_voicecontroller.py check       # Check components
+# python3 ~/robot_voicecontroller.py listen      # Single voice command
+# python3 ~/robot_voicecontroller.py loop        # Continuous mode (always listening)
+# python3 ~/robot_voicecontroller.py loop --wake-word  # Wake word mode ("Hey TARS")
+# python3 ~/robot_voicecontroller.py test-tts "Hello"  # Test TTS
+# python3 ~/robot_voicecontroller.py test-llm "go forward"  # Test LLM command generation
 ```
 
 ## Architecture
@@ -233,6 +253,51 @@ uv run python test_cameradepth_ros2.py stream    # Read streams
 
 **Drivers:**
 - `drivers/depth-camera/deptrum-ros-driver-aurora930-aarch64-0.2.1001-source.tar.gz` - Aurora 930 ROS2 driver (ARM64)
+
+**Voice Control System:**
+
+**`robot_voicecontroller.py`** - Voice controller (runs ON the robot)
+- Uses WonderEcho Pro for audio I/O (card 1, stereo 48kHz)
+- Local ASR via faster-whisper (base.en model)
+- AWS Bedrock Claude Haiku 4.5 for command generation
+- ElevenLabs Flash v2.5 for TTS response
+- ROS2-based motor control via `docker exec landerpi-ros2` (requires deployed ROS2 stack)
+- Wake word detection: "Hey TARS" activation with beep confirmation
+- Startup announcement via TTS when service starts
+- Commands: `listen` (single), `loop` (continuous), `loop --wake-word`, `check`, `test-tts`, `test-llm`
+
+**Voice Commands Supported:**
+- Movement: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, `stop`
+- Compound: `look_around` (360° scan), `patrol` (square pattern), `come_here` (approach user)
+- Modes: `follow_me` (continuous tracking - toggle on/off)
+- Parameters: speed (0.1-0.5 m/s), duration (0.5-10.0 seconds)
+
+**`deploy_voicecontroller.py`** - Deployment tool (runs locally)
+- Uploads script and installs deps on robot via SSH
+- Configures AWS credentials and ElevenLabs API key
+- Installs systemd service (`tars-voice.service`) for auto-start on boot
+- Generates activation beep sound using sox
+- Commands: `deploy`, `upload`, `install`, `configure`, `install-service`, `test`
+
+**`systemd/tars-voice.service`** - Systemd service for boot persistence
+- Starts voice controller in wake word mode after boot
+- Depends on network and Docker service
+- Auto-restarts on failure
+
+**Voice Control Architecture (all on robot):**
+```
+WonderEcho Pro (arecord) → faster-whisper (ASR) → Bedrock Haiku (LLM)
+                                                         ↓
+                                                 JSON command
+                                                         ↓
+                         docker exec landerpi-ros2 ros2 topic pub /controller/cmd_vel
+                                                         ↓
+                         ElevenLabs TTS → WonderEcho Pro (aplay)
+```
+
+**AWS IAM Policy** (`aws/landerpi-bedrock-policy.json`):
+- BedrockInvokeOnly: Minimal permissions for robot
+- Only allows `bedrock:InvokeModel` on Claude models
 
 ## Key Patterns
 
