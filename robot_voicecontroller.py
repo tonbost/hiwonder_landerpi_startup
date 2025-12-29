@@ -351,6 +351,45 @@ MOVEMENT_COMMANDS = {
     "stop":         {"linear_x": 0.0,  "linear_y": 0.0,  "angular_z": 0.0},
 }
 
+# Follow mode state
+_follow_mode_active = False
+_follow_thread = None
+
+
+def follow_mode_loop():
+    """Continuous following loop - moves forward slowly."""
+    global _follow_mode_active
+    console.print("[cyan]Follow mode active - moving forward slowly[/cyan]")
+
+    while _follow_mode_active:
+        # Publish slow forward movement
+        execute_ros2_cmd_vel(0.15, 0.0, 0.0, 0.5)
+        time.sleep(0.1)
+
+    # Stop when mode disabled
+    execute_ros2_cmd_vel(0.0, 0.0, 0.0, 0.1)
+    console.print("[cyan]Follow mode stopped[/cyan]")
+
+
+def toggle_follow_mode(enable: bool) -> bool:
+    """Enable or disable follow mode."""
+    global _follow_mode_active, _follow_thread
+    import threading
+
+    if enable and not _follow_mode_active:
+        _follow_mode_active = True
+        _follow_thread = threading.Thread(target=follow_mode_loop, daemon=True)
+        _follow_thread.start()
+        return True
+
+    elif not enable and _follow_mode_active:
+        _follow_mode_active = False
+        if _follow_thread:
+            _follow_thread.join(timeout=2.0)
+        return True
+
+    return True
+
 
 def execute_robot_command(command: dict) -> bool:
     """Execute robot command via ROS2."""
@@ -381,6 +420,11 @@ def execute_robot_command(command: dict) -> bool:
 
     elif action == "compound":
         return execute_compound_command(cmd, params)
+
+    elif action == "mode":
+        if cmd == "follow_me":
+            enable = params.get("enable", True)
+            return toggle_follow_mode(enable)
 
     console.print(f"[yellow]Unknown action: {action}/{cmd}[/yellow]")
     return True
