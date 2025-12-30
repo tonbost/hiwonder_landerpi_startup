@@ -323,7 +323,7 @@ rclpy.shutdown()
             pass
         return [], 0, 0
 
-    def move_arm_servo(self, servo_id: int, position: int, duration: float = 0.8) -> bool:
+    def move_arm_servo(self, servo_id: int, position: int, duration: float = 1.0) -> bool:
         """Move a single arm servo to a position."""
         cmd = json.dumps({
             "action": "set_position",
@@ -358,6 +358,47 @@ print("OK")
                 "python3 /tmp/arm_move.py'",
                 hide=True, warn=True, timeout=5
             )
+            return result.ok and "OK" in result.stdout
+        except Exception:
+            return False
+
+    def move_arm_pose(self, positions: list, duration: float = 1.5) -> bool:
+        """Move multiple arm servos at once (for pose changes)."""
+        cmd = json.dumps({
+            "action": "set_position",
+            "duration": duration,
+            "positions": positions  # [[servo_id, position], ...]
+        })
+        script = f'''
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import time
+
+rclpy.init()
+node = Node("arm_pose_pub")
+pub = node.create_publisher(String, "/arm/cmd", 10)
+time.sleep(0.3)
+msg = String()
+msg.data = {repr(cmd)}
+pub.publish(msg)
+rclpy.spin_once(node, timeout_sec=0.3)
+node.destroy_node()
+rclpy.shutdown()
+print("OK")
+'''
+        try:
+            self.conn.run(f"cat > /tmp/arm_pose.py << 'SCRIPT_EOF'\n{script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/arm_pose.py landerpi-ros2:/tmp/arm_pose.py", hide=True)
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "python3 /tmp/arm_pose.py'",
+                hide=True, warn=True, timeout=5
+            )
+            # Wait for movement to complete
+            time.sleep(duration)
             return result.ok and "OK" in result.stdout
         except Exception:
             return False
@@ -404,6 +445,7 @@ print("OK")
         return ArmScanner(
             arm_move_func=self.move_arm_servo,
             get_depth_func=self.get_depth_stats,
+            arm_pose_func=self.move_arm_pose,  # For multi-servo pose changes
         )
 
     def run_exploration(
