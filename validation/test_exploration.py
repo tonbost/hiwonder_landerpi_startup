@@ -13,12 +13,9 @@ Usage:
 """
 
 import json
-import math
 import signal
 import sys
-import tempfile
 import time
-from io import StringIO
 from pathlib import Path
 from typing import Optional
 
@@ -27,15 +24,12 @@ from fabric import Connection
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
-from rich.table import Table
 
 from exploration import (
     ExplorationController,
-    ExplorationConfig,
     SafetyConfig,
-    SensorConfig,
-    FrontierConfig,
-    LogConfig,
+    RemoteDataLogger,
+    RemoteLogConfig,
 )
 
 app = typer.Typer(help="LanderPi Autonomous Exploration (Sensor Fusion)")
@@ -43,7 +37,6 @@ console = Console()
 
 # Docker configuration
 DOCKER_IMAGE = "landerpi-ros2:latest"
-DOCKER_RUN_BASE = "docker run --rm --privileged --network host -v /dev:/dev"
 
 
 def load_config() -> dict:
@@ -79,6 +72,14 @@ class ExplorationRunner:
         self.conn = Connection(host=host, user=user, connect_kwargs=connect_kwargs)
         self.controller: Optional[ExplorationController] = None
         self.sdk_path = f"/home/{user}/ros_robot_controller"
+
+    def run_remote_command(self, cmd: str) -> tuple:
+        """Execute command on robot. Returns (success, output)."""
+        try:
+            result = self.conn.run(cmd, hide=True, warn=True, timeout=10)
+            return result.ok, result.stdout.strip()
+        except Exception as e:
+            return False, str(e)
 
     def verify_connection(self) -> bool:
         """Check SSH connection."""
@@ -167,7 +168,7 @@ for _ in range(10):
 
     def read_lidar_scan(self) -> tuple:
         """Read lidar scan data. Returns (ranges, angle_min, angle_increment)."""
-        # Script to read one scan
+        # Script to read one scan - outputs JSON
         scan_script = """
 import sys
 import json
@@ -176,6 +177,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+import time
 
 class ScanReader(Node):
     def __init__(self):
@@ -194,7 +196,6 @@ class ScanReader(Node):
 
 rclpy.init()
 node = ScanReader()
-import time
 start = time.time()
 while node.data is None and (time.time() - start) < 2.0:
     rclpy.spin_once(node, timeout_sec=0.1)
@@ -204,17 +205,22 @@ node.destroy_node()
 rclpy.shutdown()
 """
         try:
-            # Upload and run script
-            self.conn.put(StringIO(scan_script), "/tmp/read_scan.py")
-            cmd = (
-                f"{DOCKER_RUN_BASE} -v /tmp:/tmp {DOCKER_IMAGE} "
-                f"bash -c 'source /opt/ros/humble/setup.bash && python3 /tmp/read_scan.py'"
+            # Write script to temp file on robot and copy into container
+            self.conn.run(f"cat > /tmp/read_scan.py << 'SCRIPT_EOF'\n{scan_script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/read_scan.py landerpi-ros2:/tmp/read_scan.py", hide=True)
+
+            # Run inside the already-running landerpi-ros2 container (not a new one)
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash 2>/dev/null; "
+                "python3 /tmp/read_scan.py'",
+                hide=True, warn=True, timeout=10
             )
-            result = self.conn.run(cmd, hide=True, warn=True, timeout=10)
             if result.ok and result.stdout.strip():
                 data = json.loads(result.stdout.strip())
                 return data['ranges'], data['angle_min'], data['angle_increment']
-        except:
+        except Exception:
             pass
         return [], 0.0, 0.0
 
@@ -232,15 +238,21 @@ rclpy.shutdown()
             battery_cutoff_voltage=min_battery,
             battery_warning_voltage=min_battery + 0.4,
         )
-        log_config = LogConfig(rosbag_enabled=enable_rosbag)
 
-        # Create controller
+        # Create remote logger (logs to robot, not local machine)
+        remote_log_config = RemoteLogConfig(rosbag_enabled=enable_rosbag)
+        remote_logger = RemoteDataLogger(
+            config=remote_log_config,
+            run_command=self.run_remote_command,
+        )
+
+        # Create controller with remote logger
         self.controller = ExplorationController(
             move_func=self.move,
             stop_func=self.stop_motors,
             get_battery_func=self.get_battery,
             safety_config=safety_config,
-            log_config=log_config,
+            logger=remote_logger,
         )
 
         # Start exploration

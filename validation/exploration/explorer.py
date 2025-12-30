@@ -11,6 +11,19 @@ from .safety_monitor import SafetyMonitor, SafetyConfig
 from .frontier_planner import FrontierPlanner, FrontierConfig
 from .sensor_fusion import SensorFusion, SensorConfig
 from .data_logger import DataLogger, LogConfig
+from typing import Protocol
+
+
+class LoggerProtocol(Protocol):
+    """Protocol for data loggers (local or remote)."""
+    session_dir: str | None
+
+    def start_session(self, robot_config: dict | None = None) -> str: ...
+    def log_lidar(self, sector_mins: list, sector_maxs: list) -> None: ...
+    def log_depth(self, min_depth: float, avg_depth: float, valid_percent: float) -> None: ...
+    def log_odometry(self, vx: float, vy: float, wz: float, estimated_x: float = 0, estimated_y: float = 0) -> None: ...
+    def log_event(self, event_type: str, details: dict | None = None) -> None: ...
+    def end_session(self, summary: dict | None = None) -> dict: ...
 
 console = Console()
 
@@ -50,6 +63,7 @@ class ExplorationController:
         sensor_config: Optional[SensorConfig] = None,
         frontier_config: Optional[FrontierConfig] = None,
         log_config: Optional[LogConfig] = None,
+        logger: Optional[LoggerProtocol] = None,
         on_speak: Optional[Callable[[str], None]] = None,
     ):
         self.config = exploration_config or ExplorationConfig()
@@ -68,7 +82,8 @@ class ExplorationController:
         )
         self.sensors = SensorFusion(sensor_config)
         self.planner = FrontierPlanner(frontier_config)
-        self.logger = DataLogger(log_config)
+        # Use provided logger or create local one
+        self.logger: LoggerProtocol = logger or DataLogger(log_config)
 
         # State
         self.running = False
