@@ -17,7 +17,7 @@ class FrontierConfig:
     freshness_decay_rate: float = 5.0  # points per second
     initial_freshness: float = 50.0
     max_freshness: float = 100.0
-    min_clear_distance: float = 0.8  # meters - sector considered blocked if closer
+    min_clear_distance: float = 0.40  # meters - sector considered blocked if closer
 
 
 @dataclass

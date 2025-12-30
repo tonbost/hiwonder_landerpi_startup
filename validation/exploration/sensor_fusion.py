@@ -14,8 +14,8 @@ console = Console()
 class SensorConfig:
     """Sensor fusion configuration."""
     # Distance thresholds (meters)
-    stop_distance: float = 0.20  # Emergency stop
-    slow_distance: float = 0.50  # Slow down and prepare to turn
+    stop_distance: float = 0.15  # Emergency stop (can get 15cm from obstacles)
+    slow_distance: float = 0.30  # Slow down and prepare to turn
 
     # Depth camera settings
     depth_center_width: int = 100  # pixels from center to check
