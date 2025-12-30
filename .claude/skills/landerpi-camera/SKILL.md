@@ -333,6 +333,40 @@ class CameraValidator(Node):
 - **SDK Logs:** `/tmp/deptrum-stream.log`
 - **Latest Log:** `/tmp/node.INFO`
 
+## Exploration Integration
+
+The depth camera is integrated with autonomous exploration for enhanced obstacle detection.
+
+### How It's Used
+
+- **Topic:** `/aurora/depth/image_raw` (MONO16, millimeters)
+- **Region:** Center 200x160 pixels extracted for efficiency
+- **Fusion:** Combined with lidar using conservative min() for obstacle distance
+- **Logging:** Depth stats (`min_m`, `avg_m`, `valid_pct`) logged to `depth_summary.jsonl`
+
+### Exploration Status Display
+
+During exploration, the status shows both sensors:
+```
+Status: 29.5 min remaining | depth: 0.486m, lidar: 0.506m | action: moving forward
+```
+
+### Prerequisites Check
+
+Exploration checks for the depth topic:
+```
+Depth camera: OK
+Depth topic: OK
+```
+
+### Related Files
+
+- `validation/test_exploration.py` - `read_depth_image()` method reads camera
+- `validation/exploration/sensor_fusion.py` - `update_depth()` processes depth data
+- `validation/exploration/remote_data_logger.py` - `log_depth()` records stats
+
+See `landerpi-lidar` skill for full exploration documentation.
+
 ## Reference Files
 
 - Full documentation: `DepthCameraHowTo.md`

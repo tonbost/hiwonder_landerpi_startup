@@ -227,11 +227,12 @@ docker run --rm --privileged -v /dev:/dev landerpi-ros2:latest \
 
 Frontier-based autonomous exploration using sensor fusion (lidar + depth camera). Robot autonomously explores while avoiding obstacles.
 
-> **Note:** Currently uses lidar only. Depth camera integration is planned.
+**Sensor Fusion:** Both lidar (`/scan`) and depth camera (`/aurora/depth/image_raw`) are read at 10Hz. The `SensorFusion` class uses conservative min() of both sensors for obstacle detection, providing redundant safety.
 
 **Prerequisites:**
 - Load `landerpi-core` skill
 - Load `landerpi-motion` skill
+- Load `landerpi-camera` skill (for depth integration)
 - ROS2 stack deployed (`deploy_ros2_stack.py deploy`)
 
 ### Exploration Commands
@@ -255,21 +256,31 @@ Frontier-based autonomous exploration using sensor fusion (lidar + depth camera)
 
 ### How It Works
 
-1. **Frontier Detection** - Identifies unexplored boundaries from lidar scans
-2. **Goal Selection** - Chooses nearest frontier as navigation goal
-3. **Obstacle Avoidance** - Uses lidar for real-time collision prevention
-4. **Safety Monitoring** - Battery monitoring, runtime limits, emergency stop
-5. **State Machine** - IDLE → EXPLORING → AVOIDING → STOPPED
+1. **Sensor Reading** - Reads lidar `/scan` and depth camera `/aurora/depth/image_raw` at 10Hz
+2. **Sensor Fusion** - Combines both sensors using conservative min() for obstacle distance
+3. **Frontier Detection** - Identifies unexplored boundaries from lidar scans
+4. **Goal Selection** - Chooses nearest frontier as navigation goal
+5. **Obstacle Avoidance** - Uses fused sensor data for real-time collision prevention
+6. **Safety Monitoring** - Battery monitoring, runtime limits, emergency stop
+7. **State Machine** - IDLE → EXPLORING → AVOIDING → STOPPED
 
 ### Exploration Architecture
 
 ```
+  /scan (lidar)          /aurora/depth/image_raw (camera)
+        │                           │
+        └─────────┬─────────────────┘
+                  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  ExplorationController                       │
 │  ┌──────────────┐  ┌────────────────┐  ┌────────────────┐  │
-│  │FrontierPlanner│  │ SafetyMonitor  │  │  DataLogger    │  │
-│  │  (goals)      │  │ (battery/time) │  │  (metrics)     │  │
+│  │ SensorFusion │  │FrontierPlanner │  │  DataLogger    │  │
+│  │ (lidar+depth)│  │  (goals)       │  │  (metrics)     │  │
 │  └──────────────┘  └────────────────┘  └────────────────┘  │
+│  ┌──────────────┐                                          │
+│  │SafetyMonitor │                                          │
+│  │(battery/time)│                                          │
+│  └──────────────┘                                          │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -281,8 +292,9 @@ Frontier-based autonomous exploration using sensor fusion (lidar + depth camera)
 
 ### Module Files
 
-- `validation/test_exploration.py` - CLI entry point
+- `validation/test_exploration.py` - CLI entry point (reads lidar + depth camera)
 - `validation/exploration/explorer.py` - Main controller and state machine
+- `validation/exploration/sensor_fusion.py` - Lidar + depth camera fusion
 - `validation/exploration/frontier_planner.py` - Frontier detection and goal selection
 - `validation/exploration/safety_monitor.py` - Battery and runtime monitoring
-- `validation/exploration/data_logger.py` - Metrics and ROS2 bag recording
+- `validation/exploration/remote_data_logger.py` - Remote logging to robot (lidar + depth stats)
