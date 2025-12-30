@@ -114,9 +114,9 @@ class ArmController(Node):
 
 For ROS2-based testing (requires deployed stack):
 ```bash
-uv run python test_arm_ros2.py test --yes   # Test via /arm/cmd topic
-uv run python test_arm_ros2.py home --yes   # Home position
-uv run python test_arm_ros2.py status       # Read arm state
+uv run python validation/test_arm_ros2.py test --yes   # Test via /arm/cmd topic
+uv run python validation/test_arm_ros2.py home --yes   # Home position
+uv run python validation/test_arm_ros2.py status       # Read arm state
 ```
 
 ## Direct SDK Control (No ROS2)

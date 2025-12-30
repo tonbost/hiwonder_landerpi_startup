@@ -77,13 +77,13 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 LanderPi supports two testing approaches:
 
 ### Direct SDK Tests (No ROS2)
-- Scripts: `test_chassis_direct.py`, `test_arm.py`, `test_lidar.py`, `test_cameradepth.py`
+- Scripts: `validation/test_chassis_direct.py`, `validation/test_arm.py`, `validation/test_lidar.py`, `validation/test_cameradepth.py`
 - Use `ros_robot_controller_sdk.py` for direct serial communication
 - Self-contained, start their own Docker containers if needed
 - Good for: Quick testing, debugging, when ROS2 stack is not deployed
 
 ### ROS2 Stack Tests (Integrated)
-- Scripts: `test_chassis_motion.py`, `test_arm_ros2.py`, `test_lidar_ros2.py`, `test_cameradepth_ros2.py`
+- Scripts: `validation/test_chassis_motion.py`, `validation/test_arm_ros2.py`, `validation/test_lidar_ros2.py`, `validation/test_cameradepth_ros2.py`
 - Require persistent ROS2 stack: `deploy_ros2_stack.py deploy`
 - Use standard ROS2 topics via `docker exec landerpi-ros2`
 - Good for: Production use, integration testing, nav2/SLAM workflows
@@ -107,7 +107,7 @@ LanderPi supports two testing approaches:
 3. **Use `--yes` flag only** when user explicitly approves
 4. **Keep durations short** (2-5 seconds) for testing
 5. **Know how to stop:**
-   - Chassis: `test_chassis_direct.py stop`
+   - Chassis: `validation/test_chassis_direct.py stop`
    - Arm: `bus_servo_stop([1, 2, 3, 4, 5, 10])`
 6. **Arm safety:** Keep clear of arm reach, test without objects first
 
@@ -191,39 +191,39 @@ uv run python deploy_ros2_stack.py logs    # View stack logs
 uv run python deploy_ros2_stack.py logs -f # Follow logs
 
 # Motion - Direct SDK (load: core + motion) - ROBOT WILL MOVE!
-uv run python test_chassis_direct.py test --direction all --duration 2 --yes
-uv run python test_chassis_direct.py stop  # Emergency stop
-uv run python test_chassis_direct.py status
+uv run python validation/test_chassis_direct.py test --direction all --duration 2 --yes
+uv run python validation/test_chassis_direct.py stop  # Emergency stop
+uv run python validation/test_chassis_direct.py status
 
 # Motion - ROS2 (load: core + motion, requires deployed stack) - ROBOT WILL MOVE!
-uv run python test_chassis_motion.py test  # Test via /cmd_vel topic
+uv run python validation/test_chassis_motion.py test  # Test via /cmd_vel topic
 
 # Arm control (load: core + arm) - ARM WILL MOVE!
-uv run python test_arm.py test --yes       # Full arm test
-uv run python test_arm.py home --yes       # Move to home position
-uv run python test_arm.py status           # Servo status
-uv run python test_arm.py stop             # Emergency stop
+uv run python validation/test_arm.py test --yes       # Full arm test
+uv run python validation/test_arm.py home --yes       # Move to home position
+uv run python validation/test_arm.py status           # Servo status
+uv run python validation/test_arm.py stop             # Emergency stop
 
 # Lidar scanning (load: core + lidar)
-uv run python test_lidar.py check
-uv run python test_lidar.py start-driver
-uv run python test_lidar.py scan --samples 5
+uv run python validation/test_lidar.py check
+uv run python validation/test_lidar.py start-driver
+uv run python validation/test_lidar.py scan --samples 5
 
 # Lidar modes (load: core + motion + lidar) - ROBOT WILL MOVE!
-uv run python test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
-uv run python test_lidar.py test --mode 2 --duration 10 --yes  # Tracking
-uv run python test_lidar.py test --mode 3 --duration 10 --yes  # Guard
+uv run python validation/test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
+uv run python validation/test_lidar.py test --mode 2 --duration 10 --yes  # Tracking
+uv run python validation/test_lidar.py test --mode 3 --duration 10 --yes  # Guard
 
 # Depth camera (load: core + camera)
-uv run python test_cameradepth.py check         # Check camera + Docker
-uv run python test_cameradepth.py start-driver  # Start camera driver
-uv run python test_cameradepth.py stream        # Read camera streams
-uv run python test_cameradepth.py validate      # Full validation
+uv run python validation/test_cameradepth.py check         # Check camera + Docker
+uv run python validation/test_cameradepth.py start-driver  # Start camera driver
+uv run python validation/test_cameradepth.py stream        # Read camera streams
+uv run python validation/test_cameradepth.py validate      # Full validation
 
 # ROS2 Stack Tests (requires: deploy_ros2_stack.py deploy)
-uv run python test_arm_ros2.py test --yes        # Arm via ROS2
-uv run python test_lidar_ros2.py scan --samples 5  # Lidar via ROS2
-uv run python test_cameradepth_ros2.py stream    # Camera via ROS2
+uv run python validation/test_arm_ros2.py test --yes        # Arm via ROS2
+uv run python validation/test_lidar_ros2.py scan --samples 5  # Lidar via ROS2
+uv run python validation/test_cameradepth_ros2.py stream    # Camera via ROS2
 
 # Voice Control (load: core, requires ROS2 stack)
 uv run python deploy_voicecontroller.py deploy    # Full deployment

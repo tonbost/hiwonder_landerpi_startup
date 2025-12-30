@@ -11,6 +11,9 @@ Environment=HOME=/home/tonbost
 EnvironmentFile=/home/tonbost/.env
 WorkingDirectory=/home/tonbost
 ExecStartPre=/bin/sleep 10
+# Wake word mode disabled - service won't auto-start
+# Manual usage: python3 ~/robot_voicecontroller.py listen
+# To re-enable wake word: uncomment below and run: sudo systemctl enable --now tars-voice
 ExecStart=/usr/bin/python3 /home/tonbost/robot_voicecontroller.py loop --wake-word
 ExecStop=/bin/kill -SIGINT $MAINPID
 Restart=on-failure

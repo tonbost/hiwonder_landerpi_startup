@@ -103,7 +103,8 @@ def install():
         "typer",
         "rich",
         "boto3",
-        "faster-whisper",
+        "amazon-transcribe",  # AWS Transcribe Streaming SDK
+        "faster-whisper",     # Fallback local ASR
         "elevenlabs",
     ]
 

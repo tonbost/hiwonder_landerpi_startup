@@ -34,63 +34,63 @@ uv run python setup_landerpi.py deploy --host <IP> --user <USER> --reset
 uv run python setup_landerpi.py deploy --host <IP> --user <USER> --skip-docker
 
 # Test chassis motion - DIRECT (no ROS2 needed, uses config.json)
-uv run python test_chassis_direct.py test --direction all --duration 2 --yes  # Full test (6 directions)
-uv run python test_chassis_direct.py test --duration 3 --yes  # Forward + backward only
-uv run python test_chassis_direct.py test --direction turn_right --duration 2 --yes
-uv run python test_chassis_direct.py test --direction strafe_left --duration 2 --yes
+uv run python validation/test_chassis_direct.py test --direction all --duration 2 --yes  # Full test (6 directions)
+uv run python validation/test_chassis_direct.py test --duration 3 --yes  # Forward + backward only
+uv run python validation/test_chassis_direct.py test --direction turn_right --duration 2 --yes
+uv run python validation/test_chassis_direct.py test --direction strafe_left --duration 2 --yes
 
 # Test individual motors (for debugging motor mapping)
-uv run python test_chassis_direct.py motor-test
-uv run python test_chassis_direct.py motor-test --motor 1
+uv run python validation/test_chassis_direct.py motor-test
+uv run python validation/test_chassis_direct.py motor-test --motor 1
 
 # Test chassis motion - via ROS2 (requires deployed stack, uses config.json)
-uv run python test_chassis_motion_ros2.py test --direction all --distance 1.0 --yes  # Full test (all 6 movements)
-uv run python test_chassis_motion_ros2.py test --direction forward --distance 0.5 --yes
-uv run python test_chassis_motion_ros2.py test --direction strafe_left --distance 0.5 --yes
-uv run python test_chassis_motion_ros2.py test --direction turn_right --yes
+uv run python validation/test_chassis_motion_ros2.py test --direction all --distance 1.0 --yes  # Full test (all 6 movements)
+uv run python validation/test_chassis_motion_ros2.py test --direction forward --distance 0.5 --yes
+uv run python validation/test_chassis_motion_ros2.py test --direction strafe_left --distance 0.5 --yes
+uv run python validation/test_chassis_motion_ros2.py test --direction turn_right --yes
 
 # Emergency stop
-uv run python test_chassis_direct.py stop
+uv run python validation/test_chassis_direct.py stop
 
 # Get robot status (battery, serial port)
-uv run python test_chassis_direct.py status
+uv run python validation/test_chassis_direct.py status
 
 # Test lidar - check device, Docker, and ROS2 connectivity
-uv run python test_lidar.py check
+uv run python validation/test_lidar.py check
 
 # Start lidar driver in Docker container
-uv run python test_lidar.py start-driver
+uv run python validation/test_lidar.py start-driver
 
 # Read lidar scan data (requires driver running)
-uv run python test_lidar.py scan --samples 5
+uv run python validation/test_lidar.py scan --samples 5
 
 # Stop lidar driver container
-uv run python test_lidar.py stop-driver
+uv run python validation/test_lidar.py stop-driver
 
 # Test lidar modes (robot will MOVE! requires HiWonder ROS2 workspace)
-uv run python test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
-uv run python test_lidar.py test --mode 2 --duration 10 --yes  # Tracking (35cm following)
-uv run python test_lidar.py test --mode 3 --duration 10 --yes  # Guard (face objects)
+uv run python validation/test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
+uv run python validation/test_lidar.py test --mode 2 --duration 10 --yes  # Tracking (35cm following)
+uv run python validation/test_lidar.py test --mode 3 --duration 10 --yes  # Guard (face objects)
 
 # Stop all lidar functionality
-uv run python test_lidar.py stop
+uv run python validation/test_lidar.py stop
 
 # Test robotic arm - DIRECT (no ROS2 needed, uses config.json)
-uv run python test_arm.py test --yes  # Full arm test (positions + gripper)
-uv run python test_arm.py test --duration 3 --yes  # Custom movement duration
+uv run python validation/test_arm.py test --yes  # Full arm test (positions + gripper)
+uv run python validation/test_arm.py test --duration 3 --yes  # Custom movement duration
 
 # Get arm servo status (positions, voltages, temperatures)
-uv run python test_arm.py status
+uv run python validation/test_arm.py status
 
 # Move arm to home position (all servos at 500)
-uv run python test_arm.py home --yes
+uv run python validation/test_arm.py home --yes
 
 # Test individual servos
-uv run python test_arm.py servo-test --servo 1 --yes  # Test servo 1
-uv run python test_arm.py servo-test --yes  # Test all servos (1-5, 10)
+uv run python validation/test_arm.py servo-test --servo 1 --yes  # Test servo 1
+uv run python validation/test_arm.py servo-test --yes  # Test all servos (1-5, 10)
 
 # Emergency stop (disable all arm servos)
-uv run python test_arm.py stop
+uv run python validation/test_arm.py stop
 
 # Deploy persistent ROS2 stack (uses config.json, survives reboots)
 uv run python deploy_ros2_stack.py deploy    # Upload files and start stack
@@ -99,13 +99,13 @@ uv run python deploy_ros2_stack.py logs      # View container logs
 uv run python deploy_ros2_stack.py logs -f   # Follow logs in real-time
 
 # Test sensors via ROS2 stack (requires deploy_ros2_stack.py deploy)
-uv run python test_arm_ros2.py test --yes        # Arm via ROS2 topics
-uv run python test_arm_ros2.py home --yes        # Home position
-uv run python test_arm_ros2.py status            # Arm state
-uv run python test_lidar_ros2.py check           # Lidar status
-uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
-uv run python test_cameradepth_ros2.py check     # Camera topics
-uv run python test_cameradepth_ros2.py stream    # Read streams
+uv run python validation/test_arm_ros2.py test --yes        # Arm via ROS2 topics
+uv run python validation/test_arm_ros2.py home --yes        # Home position
+uv run python validation/test_arm_ros2.py status            # Arm state
+uv run python validation/test_lidar_ros2.py check           # Lidar status
+uv run python validation/test_lidar_ros2.py scan --samples 5  # Read scan data
+uv run python validation/test_cameradepth_ros2.py check     # Camera topics
+uv run python validation/test_cameradepth_ros2.py stream    # Read streams
 
 # Voice Control (runs ON the robot, requires WonderEcho Pro + ROS2 stack)
 uv run python deploy_voicecontroller.py deploy   # Full deployment (script + deps + service)
@@ -126,13 +126,6 @@ uv run python deploy_voicecontroller.py test     # Run check on robot
 # python3 ~/robot_voicecontroller.py loop --wake-word  # Wake word mode ("Hey TARS")
 # python3 ~/robot_voicecontroller.py test-tts "Hello"  # Test TTS
 # python3 ~/robot_voicecontroller.py test-llm "go forward"  # Test LLM command generation
-
-# Autonomous Exploration (uses config.json)
-uv run python validation/test_exploration.py start --yes        # Start exploration (30 min)
-uv run python validation/test_exploration.py start --duration 60 --yes  # 60 min exploration
-uv run python validation/test_exploration.py start --rosbag --yes       # With ROS2 bag recording
-uv run python validation/test_exploration.py stop               # Stop exploration
-uv run python validation/test_exploration.py status             # Check robot status
 ```
 
 ## Architecture
@@ -148,7 +141,7 @@ uv run python validation/test_exploration.py status             # Check robot st
 - State tracking: Creates marker files in `~/.landerpi_setup/` on remote Pi
 - `is_step_done()`/`mark_step_done()` enable idempotent, resumable deployments
 
-**`test_chassis_direct.py`** - Direct chassis motion test (NO ROS2 REQUIRED)
+**`validation/test_chassis_direct.py`** - Direct chassis motion test (NO ROS2 REQUIRED)
 - Uses `ros_robot_controller_sdk.py` for direct serial communication with STM32
 - Speed: 0.3 m/s (max), configurable duration with `--duration`
 - Reads credentials from `config.json` automatically
@@ -156,7 +149,7 @@ uv run python validation/test_exploration.py status             # Check robot st
 - Motor mapping: M1=front-left, M2=back-left, M3=front-right, M4=back-right
 - Forward motion: left side negative speed, right side positive speed
 
-**`test_chassis_motion.py`** - ROS2-based chassis motion test
+**`validation/test_chassis_motion.py`** - ROS2-based chassis motion test
 - `ChassisMotionTest` class handles SSH + ROS2 velocity commands
 - Requires deployed ROS2 stack (deploy_ros2_stack.py)
 - Uses `/cmd_vel` topic with `geometry_msgs/msg/Twist`
@@ -168,7 +161,7 @@ uv run python validation/test_exploration.py status             # Check robot st
 - `cmd_vel_bridge` node converts `/cmd_vel` (Twist) to `/ros_robot_controller/set_motor`
 - Commands: `deploy` (upload + start), `stop` (stop stack), `logs` (view logs)
 
-**`test_lidar.py`** - Lidar validation test (Docker-based ROS2)
+**`validation/test_lidar.py`** - Lidar validation test (Docker-based ROS2)
 - Tests MS200/LD19 lidar connectivity and functionality via Docker
 - ROS2 runs inside Docker container (`ros:humble-ros-base` or `landerpi-ros2:latest`)
 - Reads credentials from `config.json` automatically
@@ -182,7 +175,7 @@ uv run python validation/test_exploration.py status             # Check robot st
   - `test` - Test lidar modes (requires HiWonder ROS2 workspace)
   - `stop` - Stop all lidar functionality
 
-**`test_arm.py`** - Robotic arm test (NO ROS2 REQUIRED)
+**`validation/test_arm.py`** - Robotic arm test (NO ROS2 REQUIRED)
 - Uses `ros_robot_controller_sdk.py` for direct serial communication with STM32
 - Arm servos: IDs 1-5 (5-DOF arm) + ID 10 (gripper)
 - Position range: 0-1000, with 500 as center/home position
@@ -194,15 +187,15 @@ uv run python validation/test_exploration.py status             # Check robot st
   - `servo-test` - Test individual servos or all servos
   - `stop` - Emergency stop (disable torque on all servos)
 
-**`test_arm_ros2.py`** - ROS2-based arm test (requires deployed stack)
+**`validation/test_arm_ros2.py`** - ROS2-based arm test (requires deployed stack)
 - Uses `/arm/cmd` and `/arm/state` topics via `docker exec landerpi-ros2`
 - Commands: `test`, `home`, `stop`, `status`
 
-**`test_lidar_ros2.py`** - ROS2-based lidar test (requires deployed stack)
+**`validation/test_lidar_ros2.py`** - ROS2-based lidar test (requires deployed stack)
 - Uses `/scan` topic via `docker exec landerpi-ros2`
 - Commands: `check`, `scan`, `status`
 
-**`test_cameradepth_ros2.py`** - ROS2-based camera test (requires deployed stack)
+**`validation/test_cameradepth_ros2.py`** - ROS2-based camera test (requires deployed stack)
 - Uses `/aurora/*` topics via `docker exec landerpi-ros2`
 - Commands: `check`, `stream`, `status`
 
@@ -234,7 +227,7 @@ uv run python validation/test_exploration.py status             # Check robot st
 **Motion Controller** (Step 4 details):
 - Uploads `ros_robot_controller_sdk.py` to `~/ros_robot_controller/`
 - SDK enables direct serial communication with STM32 motor controller
-- Used by `test_chassis_direct.py` for motion control without ROS2
+- Used by `validation/test_chassis_direct.py` for motion control without ROS2
 
 **Camera Setup** (Step 5 details):
 - Installs libusb-1.0-0-dev and libudev-dev for USB camera access
@@ -305,19 +298,6 @@ WonderEcho Pro (arecord) → faster-whisper (ASR) → Bedrock Haiku (LLM)
 **AWS IAM Policy** (`aws/landerpi-bedrock-policy.json`):
 - BedrockInvokeOnly: Minimal permissions for robot
 - Only allows `bedrock:InvokeModel` on Claude models
-
-**`validation/exploration/`** - Autonomous exploration package
-- `explorer.py` - Main exploration controller
-- `sensor_fusion.py` - Depth camera + lidar fusion
-- `frontier_planner.py` - Direction selection based on freshness
-- `safety_monitor.py` - Battery and runtime monitoring
-- `data_logger.py` - Logging for future SLAM
-
-**`validation/test_exploration.py`** - Exploration CLI
-- Start/stop autonomous exploration
-- Sensor fusion: depth camera (20cm stop) + lidar (360° awareness)
-- Frontier-based exploration (seeks unexplored directions)
-- Safety: runtime limit + battery cutoff
 
 ## Key Patterns
 

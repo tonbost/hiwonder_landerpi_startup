@@ -7,7 +7,7 @@ description: Voice control for HiWonder LanderPi robot using TARS assistant. Pro
 
 ## Overview
 
-TARS is an AI voice assistant that controls the LanderPi robot using natural language commands. It runs entirely on the robot with local ASR, cloud LLM, and cloud TTS.
+TARS is an AI voice assistant that controls the LanderPi robot using natural language commands. It runs on the robot with cloud ASR (AWS Transcribe Streaming), cloud LLM (Bedrock), and cloud TTS (ElevenLabs).
 
 **Prerequisites:**
 - Load `landerpi-core` skill first
@@ -19,16 +19,20 @@ TARS is an AI voice assistant that controls the LanderPi robot using natural lan
 ## Architecture
 
 ```
-WonderEcho Pro (arecord) --> faster-whisper (local ASR) --> Bedrock Claude Haiku (LLM)
-                                                                    |
-                                                            JSON command
-                                                                    |
-                                                                    v
-              docker exec landerpi-ros2 ros2 topic pub /controller/cmd_vel
-                                                                    |
-                                                                    v
-                              ElevenLabs TTS --> WonderEcho Pro (aplay)
+WonderEcho Pro (arecord) --> AWS Transcribe Streaming (ASR) --> Bedrock Claude Haiku (LLM)
+                                     |                                   |
+                              (STT_ENGINE=transcribe)            JSON command
+                                     |                                   |
+                             [fallback: faster-whisper]                  v
+                                                docker exec landerpi-ros2 ros2 topic pub /cmd_vel
+                                                                         |
+                                                                         v
+                                       ElevenLabs TTS --> WonderEcho Pro (aplay)
 ```
+
+**Speech-to-Text Engine:**
+- Default: `STT_ENGINE=transcribe` (AWS Transcribe Streaming - faster, ~1-2s latency)
+- Fallback: `STT_ENGINE=whisper` (local faster-whisper - slower, ~3-5s latency)
 
 ## Deployment Commands
 
@@ -126,7 +130,8 @@ Example: "go forward slowly" -> speed=0.15, "turn left fast" -> speed=0.5
 | Component | Purpose | Check |
 |-----------|---------|-------|
 | WonderEcho Pro | Audio I/O | `arecord -l` shows card 1 |
-| faster-whisper | Local ASR | `python3 -c "from faster_whisper import WhisperModel"` |
+| AWS Transcribe | Cloud ASR (default) | `python3 -c "from amazon_transcribe.client import TranscribeStreamingClient"` |
+| faster-whisper | Local ASR (fallback) | `python3 -c "from faster_whisper import WhisperModel"` |
 | AWS Bedrock | LLM | `aws sts get-caller-identity` |
 | ElevenLabs | TTS | `ELEVENLABS_API_KEY` in ~/.env |
 | ROS2 Stack | Motion control | `docker ps` shows landerpi-ros2 |
@@ -223,17 +228,29 @@ journalctl -u tars-voice -n 50
 
 ## AWS IAM Policy
 
-The robot uses minimal Bedrock permissions:
+The robot uses minimal permissions for Bedrock and Transcribe:
 
 ```json
 {
     "Version": "2012-10-17",
-    "Statement": [{
-        "Effect": "Allow",
-        "Action": "bedrock:InvokeModel",
-        "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.*"
-    }]
+    "Statement": [
+        {
+            "Sid": "BedrockInvokeOnly",
+            "Effect": "Allow",
+            "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+            "Resource": [
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+                "arn:aws:bedrock:us-east-1:*:inference-profile/us.anthropic.claude-*"
+            ]
+        },
+        {
+            "Sid": "TranscribeStreaming",
+            "Effect": "Allow",
+            "Action": ["transcribe:StartStreamTranscription", "transcribe:StartStreamTranscriptionWebSocket"],
+            "Resource": "*"
+        }
+    ]
 }
 ```
 
-Policy file: `aws/landerpi-bedrock-policy.json`
+Policy file: `aws/lp-robot-bedrock-policy.json`

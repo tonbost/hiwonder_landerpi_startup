@@ -17,21 +17,21 @@ Lidar control skill for HiWonder LanderPi with LD19/MS200 lidar. Provides driver
 
 | Command | Purpose |
 |---------|---------|
-| `uv run python test_lidar.py check` | Check lidar + Docker + ROS2 |
-| `uv run python test_lidar.py start-driver` | Start lidar driver in Docker |
-| `uv run python test_lidar.py scan --samples 5` | Read lidar scan data |
-| `uv run python test_lidar.py stop-driver` | Stop lidar driver container |
-| `uv run python test_lidar.py test --mode 1 --duration 10 --yes` | Obstacle avoidance mode |
-| `uv run python test_lidar.py test --mode 2 --duration 10 --yes` | Tracking mode |
-| `uv run python test_lidar.py test --mode 3 --duration 10 --yes` | Guard mode |
-| `uv run python test_lidar.py stop` | Stop all lidar functionality |
+| `uv run python validation/test_lidar.py check` | Check lidar + Docker + ROS2 |
+| `uv run python validation/test_lidar.py start-driver` | Start lidar driver in Docker |
+| `uv run python validation/test_lidar.py scan --samples 5` | Read lidar scan data |
+| `uv run python validation/test_lidar.py stop-driver` | Stop lidar driver container |
+| `uv run python validation/test_lidar.py test --mode 1 --duration 10 --yes` | Obstacle avoidance mode |
+| `uv run python validation/test_lidar.py test --mode 2 --duration 10 --yes` | Tracking mode |
+| `uv run python validation/test_lidar.py test --mode 3 --duration 10 --yes` | Guard mode |
+| `uv run python validation/test_lidar.py stop` | Stop all lidar functionality |
 
 ### ROS2 Stack Testing
 
 For ROS2-based testing (requires deployed stack):
 ```bash
-uv run python test_lidar_ros2.py check       # Check lidar status
-uv run python test_lidar_ros2.py scan --samples 5  # Read scan data
+uv run python validation/test_lidar_ros2.py check       # Check lidar status
+uv run python validation/test_lidar_ros2.py scan --samples 5  # Read scan data
 ```
 
 ## Hardware Configuration
@@ -208,7 +208,7 @@ docker run --rm --privileged -v /dev:/dev landerpi-ros2:latest \
 - Test runs but never completes
 - "Command did not complete within X seconds"
 
-**Solution:** This was fixed - the driver now uses `sys.exit(0)` for clean shutdown. Update `test_lidar.py` if using old version.
+**Solution:** This was fixed - the driver now uses `sys.exit(0)` for clean shutdown. Update `validation/test_lidar.py` if using old version.
 
 ### Problem: Robot doesn't move in autonomous mode
 
@@ -219,6 +219,6 @@ docker run --rm --privileged -v /dev:/dev landerpi-ros2:latest \
 **Diagnosis:**
 1. Check motor SDK is deployed: `ls ~/ros_robot_controller/`
 2. Check serial port: `ls /dev/ttyACM*`
-3. Check battery: `uv run python test_chassis_direct.py status`
+3. Check battery: `uv run python validation/test_chassis_direct.py status`
 
 **Solution:** Ensure motor controller SDK is installed and battery is charged.

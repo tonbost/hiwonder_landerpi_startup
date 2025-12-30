@@ -30,7 +30,7 @@ Load credentials from `config.json` in the project root:
 | Quick Check | `uv run python checkLanderPi.py quick` | Critical systems only |
 | Connect Test | `uv run python setup_landerpi.py connect` | Test SSH connection |
 | Deploy | `uv run python setup_landerpi.py deploy` | Full setup deployment |
-| Robot Status | `uv run python test_chassis_direct.py status` | Battery/IMU status |
+| Robot Status | `uv run python validation/test_chassis_direct.py status` | Battery/IMU status |
 | Voice Deploy | `uv run python deploy_voicecontroller.py deploy` | Deploy TARS voice control |
 | Voice Test | `uv run python deploy_voicecontroller.py test` | Test voice components |
 

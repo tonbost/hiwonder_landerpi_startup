@@ -12,6 +12,15 @@
                 "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
                 "arn:aws:bedrock:us-east-1:*:inference-profile/us.anthropic.claude-*"
             ]
+        },
+        {
+            "Sid": "TranscribeStreaming",
+            "Effect": "Allow",
+            "Action": [
+                "transcribe:StartStreamTranscription",
+                "transcribe:StartStreamTranscriptionWebSocket"
+            ],
+            "Resource": "*"
         }
     ]
 }

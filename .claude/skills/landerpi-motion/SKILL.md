@@ -15,17 +15,17 @@ Motion control skill for HiWonder LanderPi Mecanum chassis. Provides direct seri
 
 | Command | Purpose |
 |---------|---------|
-| `uv run python test_chassis_direct.py test --direction all --duration 2 --yes` | Test all 6 directions |
-| `uv run python test_chassis_direct.py test --duration 3 --yes` | Test forward/backward only |
-| `uv run python test_chassis_direct.py motor-test` | Test individual motors |
-| `uv run python test_chassis_direct.py stop` | Emergency stop |
-| `uv run python test_chassis_direct.py status` | Get battery/IMU status |
+| `uv run python validation/test_chassis_direct.py test --direction all --duration 2 --yes` | Test all 6 directions |
+| `uv run python validation/test_chassis_direct.py test --duration 3 --yes` | Test forward/backward only |
+| `uv run python validation/test_chassis_direct.py motor-test` | Test individual motors |
+| `uv run python validation/test_chassis_direct.py stop` | Emergency stop |
+| `uv run python validation/test_chassis_direct.py status` | Get battery/IMU status |
 
 ### ROS2 Stack Testing
 
 For ROS2-based testing (requires deployed stack):
 ```bash
-uv run python test_chassis_motion.py test  # Test via /cmd_vel topic
+uv run python validation/test_chassis_motion.py test  # Test via /cmd_vel topic
 ```
 
 ## Safety Protocol
@@ -35,7 +35,7 @@ uv run python test_chassis_motion.py test  # Test via /cmd_vel topic
 1. Ensure clear area around robot (1m radius minimum)
 2. Always verify connection before motion commands
 3. Keep test durations short (2-5 seconds)
-4. Know emergency stop: `test_chassis_direct.py stop`
+4. Know emergency stop: `validation/test_chassis_direct.py stop`
 5. Only use `--yes` flag when user explicitly approves motion
 
 ## Motor Mapping (Mecanum Chassis)
@@ -134,7 +134,7 @@ The LanderPi uses a Docker Compose-based ROS2 stack that persists across reboots
 
 ```bash
 # Test via ROS2 (requires deployed stack)
-uv run python test_chassis_motion.py test
+uv run python validation/test_chassis_motion.py test
 ```
 
 ### Architecture
@@ -214,7 +214,7 @@ Robot geometry parameters in `config/robot_params.yaml`:
 ls /dev/ttyACM*
 
 # Check battery voltage
-uv run python test_chassis_direct.py status
+uv run python validation/test_chassis_direct.py status
 ```
 
 **Solutions:**
@@ -231,7 +231,7 @@ uv run python test_chassis_direct.py status
 **Solution:**
 Motor wiring may be swapped. Use motor-test to identify:
 ```bash
-uv run python test_chassis_direct.py motor-test --motor 1
+uv run python validation/test_chassis_direct.py motor-test --motor 1
 ```
 
 Test each motor individually and verify physical position matches expected.

@@ -29,6 +29,7 @@ Usage:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,8 +83,9 @@ BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "tTV9ysSyKVtziN1ESbZV")
 
-# Whisper model (will be downloaded on first use)
-WHISPER_MODEL = "base.en"  # Options: tiny.en, base.en, small.en
+# Speech-to-Text settings
+STT_ENGINE = os.getenv("STT_ENGINE", "transcribe")  # "whisper" or "transcribe"
+WHISPER_MODEL = "small.en"  # Options: tiny.en, base.en, small.en, medium.en
 
 # Robot SDK path
 SDK_PATH = Path.home() / "ros_robot_controller"
@@ -96,7 +98,6 @@ Available commands:
 - Movement: forward, backward, turn_left, turn_right, strafe_left, strafe_right, stop
 - Compound: look_around (360 scan), patrol (square pattern), come_here (approach user)
 - Mode: follow_me (continuous tracking - starts/stops a mode)
-- Explore: explore (start autonomous exploration), stop_exploring (stop exploration)
 - Arm: home, wave (if equipped)
 
 Parameters:
@@ -136,25 +137,27 @@ Rules:
 def execute_ros2_cmd_vel(linear_x: float, linear_y: float, angular_z: float, duration: float = 2.0) -> bool:
     """Publish velocity command via ROS2 docker container."""
     try:
-        # Publish movement command
+        # Publish movement command continuously at 10Hz for the duration
         twist_msg = (
             f"'{{linear: {{x: {linear_x}, y: {linear_y}, z: 0.0}}, "
             f"angular: {{x: 0.0, y: 0.0, z: {angular_z}}}}}'"
         )
-        cmd = f'docker exec landerpi-ros2 ros2 topic pub --once /controller/cmd_vel geometry_msgs/msg/Twist {twist_msg}'
+        # Use timeout command to limit duration, publish at 10Hz
+        ros2_cmd = f'timeout {duration} ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist {twist_msg}'
+        cmd = f'docker exec landerpi-ros2 bash -c "source /opt/ros/humble/setup.bash && {ros2_cmd}"'
 
-        result = subprocess.run(cmd, shell=True, capture_output=True, timeout=5)
-        if result.returncode != 0:
+        console.print(f"[cyan]Moving for {duration}s...[/cyan]")
+        result = subprocess.run(cmd, shell=True, capture_output=True, timeout=duration + 10)
+        # timeout command returns 124 when it times out (expected behavior)
+        if result.returncode not in [0, 124]:
             console.print(f"[red]ROS2 command failed: {result.stderr.decode()}[/red]")
             return False
 
-        # Wait for duration
-        time.sleep(duration)
-
         # Stop command
         stop_msg = "'{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'"
-        stop_cmd = f'docker exec landerpi-ros2 ros2 topic pub --once /controller/cmd_vel geometry_msgs/msg/Twist {stop_msg}'
-        subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=5)
+        stop_ros2_cmd = f'ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {stop_msg}'
+        stop_cmd = f'docker exec landerpi-ros2 bash -c "source /opt/ros/humble/setup.bash && {stop_ros2_cmd}"'
+        subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=15)
 
         return True
 
@@ -237,7 +240,7 @@ def play_activation_sound():
         console.print("[bold green]* ACTIVATED *[/bold green]")
 
 
-def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] = None) -> bool:
+def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] = None) -> Optional[str]:
     """
     Listen continuously for wake phrase.
 
@@ -246,18 +249,32 @@ def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] =
         timeout: Optional timeout in seconds (None = forever)
 
     Returns:
-        True if wake word detected, False if timeout
+        Any text after the wake phrase, or empty string if just wake word, or None if timeout
     """
+    # Common Whisper misrecognitions of "Hey TARS"
+    wake_variations = [
+        "hey tars", "hey tarrs", "hey tarz",
+        "hey tom", "hey toms", "hey tam",
+        "hey tas", "hey taas", "hey tass",
+        "hey tal", "hey tall", "hey tau",
+        "hey stars", "hey star",
+        "a tars", "a tom",
+        "hey char", "hey chars",
+        "hey ta", "haytars", "hay tars",
+        "eight hours", "hey doors", "hey down",
+        "hey dar", "hey tara", "hey tos",
+    ]
+
     console.print(f"[dim]Listening for '{wake_phrase}'...[/dim]")
     start_time = time.time()
 
     while True:
         # Check timeout
         if timeout and (time.time() - start_time) > timeout:
-            return False
+            return None
 
-        # Record short clip
-        audio_path = record_audio(duration=1.5)
+        # Record clip (3s to capture full wake phrase)
+        audio_path = record_audio(duration=3.0)
         if not audio_path:
             time.sleep(0.1)
             continue
@@ -266,10 +283,34 @@ def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] =
             # Quick transcription
             text = transcribe_audio(audio_path)
 
-            if text and wake_phrase in text.lower():
-                play_activation_sound()
-                console.print("[bold green]Wake word detected![/bold green]")
-                return True
+            if text:
+                text_lower = text.lower()
+                # Remove punctuation for matching (keep spaces)
+                text_normalized = re.sub(r'[^\w\s]', '', text_lower)
+
+                # Check for any wake word variation
+                matched_wake = None
+                for variation in wake_variations:
+                    if variation in text_normalized:
+                        matched_wake = variation
+                        break
+
+                if matched_wake:
+                    play_activation_sound()
+                    console.print(f"[bold green]Wake word detected! (matched: '{matched_wake}')[/bold green]")
+
+                    # Extract any command that came after the wake phrase
+                    # Use normalized text for finding position
+                    wake_idx = text_normalized.find(matched_wake)
+                    if wake_idx >= 0:
+                        after_wake = text_normalized[wake_idx + len(matched_wake):].strip()
+                    else:
+                        after_wake = ""
+
+                    # Clean up common artifacts
+                    after_wake = after_wake.lstrip(",.!? ")
+
+                    return after_wake if after_wake else ""
 
         finally:
             # Cleanup temp file
@@ -282,8 +323,70 @@ def wait_for_wake_word(wake_phrase: str = "hey tars", timeout: Optional[float] =
         time.sleep(0.05)
 
 
+def listen_for_instruction(silence_timeout: float = 3.0, max_duration: float = 30.0) -> Optional[str]:
+    """
+    Listen for instruction with silence detection.
+
+    Records in chunks until silence_timeout seconds of silence detected,
+    or max_duration reached.
+
+    Args:
+        silence_timeout: Seconds of silence to end listening (default: 3.0)
+        max_duration: Maximum total listening time (default: 30.0)
+
+    Returns:
+        Accumulated instruction text, or None if no speech detected
+    """
+    console.print("[cyan]Listening for instruction...[/cyan]")
+
+    accumulated_text = []
+    silence_seconds = 0.0
+    total_seconds = 0.0
+    chunk_duration = 2.0  # Record in 2-second chunks
+
+    while total_seconds < max_duration:
+        audio_path = record_audio(duration=chunk_duration)
+        if not audio_path:
+            silence_seconds += chunk_duration
+            total_seconds += chunk_duration
+            if silence_seconds >= silence_timeout:
+                break
+            continue
+
+        try:
+            text = transcribe_audio(audio_path)
+            total_seconds += chunk_duration
+
+            if text and len(text.strip()) > 1:
+                # Got speech - reset silence counter
+                accumulated_text.append(text.strip())
+                silence_seconds = 0.0
+                console.print(f"[dim]Accumulated: {' '.join(accumulated_text)}[/dim]")
+            else:
+                # No speech - increment silence counter
+                silence_seconds += chunk_duration
+                console.print(f"[dim]Silence: {silence_seconds:.1f}s / {silence_timeout}s[/dim]")
+
+                if silence_seconds >= silence_timeout:
+                    console.print("[cyan]Silence detected - processing command[/cyan]")
+                    break
+        finally:
+            try:
+                os.remove(audio_path)
+            except:
+                pass
+
+    if accumulated_text:
+        full_text = " ".join(accumulated_text)
+        console.print(f"[green]Full instruction: \"{full_text}\"[/green]")
+        return full_text
+
+    console.print("[yellow]No instruction received[/yellow]")
+    return None
+
+
 # ============================================================================
-# Speech-to-Text (Local Whisper)
+# Speech-to-Text
 # ============================================================================
 
 _whisper_model = None
@@ -299,26 +402,108 @@ def get_whisper_model():
     return _whisper_model
 
 
-def transcribe_audio(audio_path: str) -> Optional[str]:
+def transcribe_with_whisper(audio_path: str) -> Optional[str]:
     """Transcribe audio using local Whisper."""
     try:
         model = get_whisper_model()
-
-        console.print("[yellow]Transcribing...[/yellow]")
         segments, info = model.transcribe(audio_path, language="en", beam_size=5)
-
         text = " ".join([segment.text for segment in segments]).strip()
-
-        if text:
-            console.print(f"[green]Heard: \"{text}\"[/green]")
-            return text
-        else:
-            console.print("[dim]No speech detected[/dim]")
-            return None
-
+        return text if text else None
     except Exception as e:
-        console.print(f"[red]Transcription error: {e}[/red]")
+        console.print(f"[red]Whisper error: {e}[/red]")
         return None
+
+
+def transcribe_with_aws(audio_path: str) -> Optional[str]:
+    """Transcribe audio using Amazon Transcribe Streaming."""
+    import asyncio
+    import wave
+    import boto3
+
+    try:
+        # Read audio file
+        with wave.open(audio_path, 'rb') as wf:
+            sample_rate = wf.getframerate()
+            audio_data = wf.readframes(wf.getnframes())
+
+        # Use synchronous TranscribeService with pre-signed URL approach
+        # For streaming, we'll use the simpler batch approach with in-memory processing
+        from botocore.config import Config
+
+        # Create transcribe client
+        transcribe = boto3.client(
+            'transcribe',
+            region_name=AWS_REGION,
+            config=Config(signature_version='v4')
+        )
+
+        # For short audio, use start_transcription_job with media from S3
+        # But for simplicity, let's use the streaming SDK
+        # Using amazon-transcribe package for async streaming
+
+        async def transcribe_stream():
+            from amazon_transcribe.client import TranscribeStreamingClient
+            from amazon_transcribe.handlers import TranscriptResultStreamHandler
+            from amazon_transcribe.model import TranscriptEvent
+
+            client = TranscribeStreamingClient(region=AWS_REGION)
+
+            stream = await client.start_stream_transcription(
+                language_code="en-US",
+                media_sample_rate_hz=sample_rate,
+                media_encoding="pcm",
+            )
+
+            collected_text = []
+
+            class MyHandler(TranscriptResultStreamHandler):
+                async def handle_transcript_event(self, transcript_event: TranscriptEvent):
+                    results = transcript_event.transcript.results
+                    for result in results:
+                        if not result.is_partial:
+                            for alt in result.alternatives:
+                                collected_text.append(alt.transcript)
+
+            handler = MyHandler(stream.output_stream)
+
+            # Send audio in chunks
+            chunk_size = 1024 * 16  # 16KB chunks
+            for i in range(0, len(audio_data), chunk_size):
+                chunk = audio_data[i:i + chunk_size]
+                await stream.input_stream.send_audio_event(audio_chunk=chunk)
+
+            await stream.input_stream.end_stream()
+            await handler.handle_events()
+
+            return " ".join(collected_text).strip()
+
+        # Run async transcription
+        text = asyncio.run(transcribe_stream())
+        return text if text else None
+
+    except ImportError:
+        console.print("[yellow]amazon-transcribe not installed, falling back to Whisper[/yellow]")
+        return transcribe_with_whisper(audio_path)
+    except Exception as e:
+        console.print(f"[red]AWS Transcribe error: {e}[/red]")
+        return None
+
+
+def transcribe_audio(audio_path: str) -> Optional[str]:
+    """Transcribe audio using configured STT engine."""
+    console.print(f"[yellow]Transcribing ({STT_ENGINE})...[/yellow]")
+
+    if STT_ENGINE == "transcribe":
+        text = transcribe_with_aws(audio_path)
+    else:
+        text = transcribe_with_whisper(audio_path)
+
+    if text:
+        console.print(f"[green]Heard: \"{text}\"[/green]")
+    else:
+        console.print("[dim]No speech detected[/dim]")
+
+    return text
 
 
 # ============================================================================
@@ -500,17 +685,6 @@ def execute_robot_command(command: dict) -> bool:
         if cmd == "follow_me":
             enable = params.get("enable", True)
             return toggle_follow_mode(enable)
-
-    elif action == "explore":
-        if cmd == "explore":
-            # Start exploration in background
-            console.print("[cyan]Starting exploration mode...[/cyan]")
-            # TODO: Integrate with exploration controller
-            return True
-        elif cmd == "stop_exploring":
-            # Stop exploration
-            console.print("[cyan]Stopping exploration...[/cyan]")
-            return True
 
     console.print(f"[yellow]Unknown action: {action}/{cmd}[/yellow]")
     return True
@@ -715,42 +889,58 @@ def loop(
         while True:
             # Wake word mode: wait for "Hey TARS"
             if wake_word:
-                if not wait_for_wake_word("hey tars"):
+                wake_result = wait_for_wake_word("hey tars")
+                if wake_result is None:
                     continue
 
-            console.print("\n" + "─" * 40)
+                console.print("\n" + "─" * 40)
 
-            # Record command
-            audio_path = record_audio(duration=duration)
-            if not audio_path:
-                time.sleep(pause)
-                continue
+                # Check if command was included with wake word (e.g., "Hey TARS move forward")
+                # Require at least 3 chars to be considered a real command (filter artifacts like "l")
+                if wake_result and len(wake_result) >= 3:
+                    text = wake_result
+                    console.print(f"[green]Command with wake word: \"{text}\"[/green]")
+                else:
+                    # Just wake word (or short artifact) - prompt for instruction
+                    speak_response("I'm here, waiting for instruction.")
 
-            try:
-                # Transcribe
-                text = transcribe_audio(audio_path)
-                if not text or len(text.strip()) < 2:
+                    # Listen with silence detection
+                    text = listen_for_instruction(silence_timeout=3.0, max_duration=30.0)
+                    if not text:
+                        console.print("[yellow]No instruction received, returning to standby[/yellow]")
+                        time.sleep(pause)
+                        continue
+            else:
+                # Continuous mode - record single command
+                console.print("\n" + "─" * 40)
+                audio_path = record_audio(duration=duration)
+                if not audio_path:
                     time.sleep(pause)
                     continue
 
-                # Check for exit command
-                text_lower = text.lower()
-                if "stop listening" in text_lower or "goodbye" in text_lower or "exit" in text_lower:
-                    speak_response("Voice control offline. Goodbye, sir.")
-                    break
-
-                # Generate and execute
-                command = generate_robot_command(text)
-                if command:
-                    execute_robot_command(command)
-                    response = command.get("response", "Done.")
-                    speak_response(response)
-
-            finally:
                 try:
-                    os.remove(audio_path)
-                except:
-                    pass
+                    text = transcribe_audio(audio_path)
+                    if not text or len(text.strip()) < 2:
+                        time.sleep(pause)
+                        continue
+                finally:
+                    try:
+                        os.remove(audio_path)
+                    except:
+                        pass
+
+            # Check for exit command
+            text_lower = text.lower()
+            if "stop listening" in text_lower or "goodbye" in text_lower or "exit" in text_lower:
+                speak_response("Voice control offline. Goodbye, sir.")
+                break
+
+            # Generate and execute
+            command = generate_robot_command(text)
+            if command:
+                execute_robot_command(command)
+                response = command.get("response", "Done.")
+                speak_response(response)
 
             time.sleep(pause)
 
