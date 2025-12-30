@@ -355,10 +355,14 @@ rclpy.shutdown()
 
                 # Read sensors
                 ranges, angle_min, angle_inc = self.read_lidar_scan()
+                depth_data, depth_width, depth_height = self.read_depth_image()
+
                 if ranges:
                     self.controller.update_sensors(
                         ranges, angle_min, angle_inc,
-                        depth_data=None, depth_width=0, depth_height=0
+                        depth_data=depth_data if depth_data else None,
+                        depth_width=depth_width,
+                        depth_height=depth_height
                     )
 
                 # Step controller
