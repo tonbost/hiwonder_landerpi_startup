@@ -45,7 +45,7 @@ class ExplorationConfig:
     """Exploration configuration."""
     # Motion
     forward_speed: float = 0.2  # m/s
-    turn_speed: float = 1.0  # rad/s
+    turn_speed: float = 1.5  # rad/s (increased for better turning)
 
     # Safety
     obstacle_stop_dist: float = 0.25  # m - emergency stop
@@ -55,6 +55,10 @@ class ExplorationConfig:
     loop_rate_hz: float = 5.0  # Control loop rate
     stuck_timeout: float = 15.0  # seconds without progress = stuck
     escape_duration: float = 2.0  # seconds to back up
+
+    # Turn commitment - prevents oscillation
+    min_turn_duration: float = 0.8  # seconds to commit to a turn direction
+    turn_complete_threshold: float = 20.0  # degrees - consider turn complete when within this
 
     # Battery
     battery_cutoff: float = 6.6  # V
@@ -72,6 +76,10 @@ class ExplorationState:
     battery_voltage: float = 0.0
     lidar_samples: int = 0
     events: List[Dict] = field(default_factory=list)
+    # Turn commitment tracking
+    turn_start_time: float = 0.0
+    turn_direction: int = 0  # -1 = right, 0 = none, 1 = left
+    turn_target_sector: str = ""
 
 
 class DataLogger:
@@ -485,26 +493,51 @@ class Explorer:
                 time.sleep(loop_period - loop_elapsed)
 
     def _navigate(self) -> None:
-        """Make navigation decision."""
+        """Make navigation decision with turn commitment to prevent oscillation."""
         front_dist = self.planner.get_front_distance()
 
-        # Emergency stop
+        # Emergency stop - always takes priority
         if front_dist < self.config.obstacle_stop_dist:
             self.robot.stop()
             self.state.action = "obstacle_stop"
+            self.state.turn_direction = 0  # Cancel any turn
             self.logger.log_event("obstacle_stop", {"distance": front_dist})
             return
 
-        # Get best direction
+        # Check if we're committed to a turn
+        if self.state.turn_direction != 0:
+            turn_elapsed = time.time() - self.state.turn_start_time
+
+            # Check if minimum turn duration has passed
+            if turn_elapsed < self.config.min_turn_duration:
+                # Keep turning in committed direction
+                wz = self.config.turn_speed * self.state.turn_direction
+                self.robot.move(0, 0, wz)
+                return
+
+            # Minimum time passed - check if turn is complete
+            best_sector, _ = self.planner.get_best_direction(self.config.obstacle_slow_dist)
+            if best_sector and abs(best_sector.center_angle) < self.config.turn_complete_threshold:
+                # Turn complete - can move forward now
+                self.state.turn_direction = 0
+                self.state.turn_target_sector = ""
+                print(f"Turn complete, front clear at {front_dist:.2f}m")
+            else:
+                # Keep turning - not yet facing clear direction
+                wz = self.config.turn_speed * self.state.turn_direction
+                self.robot.move(0, 0, wz)
+                self.state.action = f"turning to {self.state.turn_target_sector}"
+                return
+
+        # Not turning - evaluate direction
         best_sector, reason = self.planner.get_best_direction(self.config.obstacle_slow_dist)
 
         if best_sector is None:
-            # All blocked
+            # All blocked - stop
             self.robot.stop()
             self.state.action = "blocked"
             return
 
-        # Calculate motion
         target_angle = best_sector.center_angle
         speed = self.config.forward_speed
 
@@ -512,12 +545,18 @@ class Explorer:
         if front_dist < self.config.obstacle_slow_dist:
             speed *= 0.5
 
-        # Turn if not facing best direction
-        if abs(target_angle) > 30:
-            wz = self.config.turn_speed if target_angle > 0 else -self.config.turn_speed
+        # Need to turn?
+        if abs(target_angle) > self.config.turn_complete_threshold:
+            # Start committed turn
+            self.state.turn_direction = 1 if target_angle > 0 else -1
+            self.state.turn_start_time = time.time()
+            self.state.turn_target_sector = best_sector.name
+
+            wz = self.config.turn_speed * self.state.turn_direction
             self.robot.move(0, 0, wz)
             self.state.action = f"turning to {best_sector.name}"
             self.logger.log_motion(0, 0, wz)
+            print(f"Starting turn to {best_sector.name} ({target_angle:.0f}°)")
         else:
             # Move forward
             self.robot.move(speed, 0, 0)
@@ -530,22 +569,44 @@ class Explorer:
         return (time.time() - self.state.last_movement_time) > self.config.stuck_timeout
 
     def _escape_stuck(self) -> None:
-        """Escape from stuck situation."""
+        """Escape from stuck situation with committed maneuver."""
         print("Stuck detected - escaping")
         self.logger.log_event("stuck_escape")
 
-        # Back up
+        # Back up for escape duration
+        print("  Backing up...")
         self.robot.move(-self.config.forward_speed * 0.5, 0, 0)
         time.sleep(self.config.escape_duration)
-
-        # Turn toward most open direction
-        best = max(self.planner.sectors, key=lambda s: s.min_distance)
-        if best.min_distance > 0.3:
-            wz = self.config.turn_speed if best.center_angle > 0 else -self.config.turn_speed
-            self.robot.move(0, 0, wz)
-            time.sleep(1.0)
-
         self.robot.stop()
+
+        # Re-read lidar after backing up
+        ranges, angle_min, angle_inc = self.robot.read_lidar()
+        if ranges:
+            self.planner.update(ranges, angle_min, angle_inc)
+
+        # Find most open direction and commit to full turn
+        best = max(self.planner.sectors, key=lambda s: s.min_distance)
+        if best.min_distance > 0.3 and abs(best.center_angle) > 15:
+            # Calculate turn time needed (angle / angular_velocity)
+            turn_angle_rad = abs(math.radians(best.center_angle))
+            turn_time = turn_angle_rad / self.config.turn_speed
+            turn_time = max(turn_time, 0.5)  # At least 0.5s
+            turn_time = min(turn_time, 3.0)  # At most 3s
+
+            direction = 1 if best.center_angle > 0 else -1
+            wz = self.config.turn_speed * direction
+
+            print(f"  Turning {best.center_angle:.0f}° to {best.name} ({turn_time:.1f}s)")
+            self.robot.move(0, 0, wz)
+            time.sleep(turn_time)
+            self.robot.stop()
+        else:
+            # No clear direction - try random turn
+            print("  No clear direction, turning 90°")
+            self.robot.move(0, 0, self.config.turn_speed)
+            time.sleep(1.0)  # ~90 degrees at 1.5 rad/s
+            self.robot.stop()
+
         self.state.last_movement_time = time.time()
 
 

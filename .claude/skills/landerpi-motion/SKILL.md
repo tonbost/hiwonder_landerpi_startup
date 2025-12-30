@@ -200,6 +200,72 @@ Robot geometry parameters in `config/robot_params.yaml`:
 | Serial baud | 1000000 | STM32 communication |
 | Serial port | /dev/ttyACM0 | Motor controller |
 
+## Autonomous Navigation Parameters
+
+When implementing autonomous navigation with sensor feedback loops, use **turn commitment** to prevent oscillation.
+
+### Problem: Turn Oscillation
+
+Without commitment, a fast control loop (5-10 Hz) causes:
+1. Robot turns left slightly
+2. Re-reads sensors, picks slightly different direction
+3. Robot turns right slightly
+4. Oscillates without making progress
+
+### Solution: Turn Commitment
+
+Once a turn decision is made, commit to it for a minimum duration before re-evaluating.
+
+| Parameter | Recommended | Description |
+|-----------|-------------|-------------|
+| Turn speed | 1.5 rad/s | ~86°/sec - fast enough to complete turns |
+| Min turn duration | 0.8 sec | Minimum time before re-evaluating direction |
+| Turn complete threshold | 20° | Consider turn done when target within this angle |
+| Escape turn time | 0.5-3.0 sec | Calculate from angle: `angle_rad / turn_speed` |
+
+### Implementation Pattern
+
+```python
+# State tracking
+turn_direction = 0      # -1=right, 0=none, 1=left
+turn_start_time = 0.0
+turn_target = ""
+
+def navigate():
+    # If currently turning, check commitment
+    if turn_direction != 0:
+        elapsed = time.time() - turn_start_time
+        if elapsed < MIN_TURN_DURATION:
+            # Keep turning - don't change direction yet
+            robot.move(0, 0, TURN_SPEED * turn_direction)
+            return
+
+        # Check if turn complete
+        if target_now_in_front():
+            turn_direction = 0  # Done turning
+        else:
+            # Keep turning same direction
+            robot.move(0, 0, TURN_SPEED * turn_direction)
+            return
+
+    # Not turning - evaluate new direction
+    if need_to_turn(target_angle):
+        turn_direction = 1 if target_angle > 0 else -1
+        turn_start_time = time.time()
+        robot.move(0, 0, TURN_SPEED * turn_direction)
+    else:
+        robot.move(forward_speed, 0, 0)
+```
+
+### Escape Maneuver
+
+When stuck, perform a committed escape:
+1. Back up for 2 seconds
+2. Stop and re-scan environment
+3. Calculate turn time: `turn_time = abs(target_angle_rad) / turn_speed`
+4. Execute full turn without interruption
+5. Resume normal navigation
+
 ## Troubleshooting
 
 ### Problem: Motors don't respond
