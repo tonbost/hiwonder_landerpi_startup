@@ -34,13 +34,13 @@ console = Console()
 class ExplorationConfig:
     """Main exploration configuration."""
     # Motion
-    forward_speed: float = 0.2  # m/s
-    turn_speed: float = 1.2  # rad/s
-    slow_factor: float = 0.5  # Speed multiplier when obstacle nearby
+    forward_speed: float = 0.35  # m/s (faster exploration when clear)
+    turn_speed: float = 1.5  # rad/s (faster turning)
+    slow_factor: float = 0.5  # Speed multiplier when obstacle nearby (0.175 m/s)
 
     # Timing
     loop_rate_hz: float = 10.0
-    decision_rate_hz: float = 2.0  # How often to make navigation decisions
+    decision_rate_hz: float = 4.0  # How often to make navigation decisions (faster response)
 
     # Stuck detection (legacy, now handled by escape handler)
     stuck_timeout: float = 10.0  # seconds without movement = stuck
