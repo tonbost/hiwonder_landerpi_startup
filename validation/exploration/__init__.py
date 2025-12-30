@@ -6,6 +6,8 @@ from .sensor_fusion import SensorFusion, SensorConfig, ObstacleState
 from .data_logger import DataLogger, LogConfig
 from .remote_data_logger import RemoteDataLogger, RemoteLogConfig
 from .explorer import ExplorationController, ExplorationConfig
+from .escape_handler import EscapeHandler, EscapeConfig, EscapeLevel, EscapeResult
+from .arm_scanner import ArmScanner, ArmScannerConfig, DepthReading
 
 __all__ = [
     "SafetyMonitor",
@@ -22,4 +24,13 @@ __all__ = [
     "RemoteLogConfig",
     "ExplorationController",
     "ExplorationConfig",
+    # Escape handling
+    "EscapeHandler",
+    "EscapeConfig",
+    "EscapeLevel",
+    "EscapeResult",
+    # Arm scanner
+    "ArmScanner",
+    "ArmScannerConfig",
+    "DepthReading",
 ]

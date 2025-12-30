@@ -3,7 +3,7 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 from rich.console import Console
 
@@ -11,6 +11,8 @@ from .safety_monitor import SafetyMonitor, SafetyConfig
 from .frontier_planner import FrontierPlanner, FrontierConfig
 from .sensor_fusion import SensorFusion, SensorConfig
 from .data_logger import DataLogger, LogConfig
+from .escape_handler import EscapeHandler, EscapeConfig, EscapeLevel
+from .arm_scanner import ArmScanner, ArmScannerConfig
 from typing import Protocol
 
 
@@ -40,9 +42,14 @@ class ExplorationConfig:
     loop_rate_hz: float = 10.0
     decision_rate_hz: float = 2.0  # How often to make navigation decisions
 
-    # Stuck detection
+    # Stuck detection (legacy, now handled by escape handler)
     stuck_timeout: float = 10.0  # seconds without movement = stuck
     stuck_escape_duration: float = 2.0  # seconds to back up when stuck
+
+    # Oscillation detection
+    turn_history_window: float = 10.0  # seconds to track turn history
+    oscillation_threshold: int = 3  # alternating turns to trigger escape
+    blocked_count_threshold: int = 3  # forward blocks to trigger escape
 
 
 class ExplorationController:
@@ -65,6 +72,9 @@ class ExplorationController:
         log_config: Optional[LogConfig] = None,
         logger: Optional[LoggerProtocol] = None,
         on_speak: Optional[Callable[[str], None]] = None,
+        # New: arm scanner for escape
+        arm_scanner: Optional[ArmScanner] = None,
+        escape_config: Optional[EscapeConfig] = None,
     ):
         self.config = exploration_config or ExplorationConfig()
 
@@ -85,11 +95,25 @@ class ExplorationController:
         # Use provided logger or create local one
         self.logger: LoggerProtocol = logger or DataLogger(log_config)
 
+        # Escape handler with optional arm scanner
+        self.arm_scanner = arm_scanner
+        self.escape_handler = EscapeHandler(
+            move_func=move_func,
+            stop_func=stop_func,
+            arm_scanner=arm_scanner,
+            config=escape_config,
+            on_speak=self.speak,
+        )
+
         # State
         self.running = False
         self.last_decision_time: float = 0
         self.last_significant_movement: float = 0
         self.current_action: str = "idle"
+
+        # Oscillation detection state
+        self.turn_history: List[Tuple[str, float]] = []  # (direction, timestamp)
+        self.forward_blocked_count: int = 0
 
     def start(self) -> None:
         """Start exploration."""
@@ -160,11 +184,28 @@ class ExplorationController:
         if obstacle.should_stop:
             self.stop()
             self.current_action = "stopped"
+            self.forward_blocked_count += 1
             self.logger.log_event("obstacle_stop", {"distance": obstacle.closest_distance})
-            console.print(f"[red]Obstacle at {obstacle.closest_distance:.2f}m - stopped[/red]")
+            console.print(f"[red]Obstacle at {obstacle.closest_distance:.2f}m - stopped (blocked: {self.forward_blocked_count})[/red]")
+
+            # Check if we should trigger escape
+            if self._should_escape():
+                self._handle_escape()
             return True  # Continue loop but don't move
 
-        # Check for stuck condition
+        # Check for escape in progress
+        if self.escape_handler.escape_in_progress:
+            if self.escape_handler.should_escalate():
+                self._handle_escape_escalation()
+            return True
+
+        # Check for oscillation-triggered escape (even if not currently blocked)
+        if self._is_oscillating() and not self.escape_handler.in_cooldown():
+            console.print("[yellow]Oscillation detected![/yellow]")
+            self._handle_escape()
+            return True
+
+        # Check for stuck condition (legacy fallback)
         if self._check_stuck():
             self._escape_stuck()
             return True
@@ -184,7 +225,7 @@ class ExplorationController:
         if best_sector is None:
             # All blocked - try to escape
             console.print("[yellow]All directions blocked[/yellow]")
-            self._escape_stuck()
+            self._handle_escape()
             return
 
         # Calculate turn needed
@@ -202,11 +243,16 @@ class ExplorationController:
             wz = self.config.turn_speed if target_angle > 0 else -self.config.turn_speed
             self.move(0, 0, wz)
             self.current_action = f"turning to {self.planner.SECTOR_NAMES[best_sector.index]}"
+
+            # Record turn direction for oscillation detection
+            direction = "left" if target_angle > 0 else "right"
+            self._record_turn(direction)
         else:
-            # Move forward
+            # Move forward - reset blocked count since we're making progress
             self.move(speed, 0, 0)
             self.current_action = "moving forward"
             self.last_significant_movement = time.time()
+            self.forward_blocked_count = 0  # Reset on successful forward movement
 
         # Mark current direction as visited
         self.planner.mark_visited(0)  # Front is always where we're looking
@@ -219,8 +265,8 @@ class ExplorationController:
         return (time.time() - self.last_significant_movement) > self.config.stuck_timeout
 
     def _escape_stuck(self) -> None:
-        """Attempt to escape stuck situation."""
-        console.print("[yellow]Stuck detected - escaping[/yellow]")
+        """Attempt to escape stuck situation (legacy fallback)."""
+        console.print("[yellow]Stuck detected - using legacy escape[/yellow]")
         self.logger.log_event("stuck_escape")
 
         # Back up
@@ -241,11 +287,167 @@ class ExplorationController:
         self.stop()
         self.last_significant_movement = time.time()
 
+    # --- Oscillation Detection ---
+
+    def _record_turn(self, direction: str) -> None:
+        """Record a turn direction for oscillation detection."""
+        now = time.time()
+        self.turn_history.append((direction, now))
+        # Keep only recent turns within the window
+        cutoff = now - self.config.turn_history_window
+        self.turn_history = [(d, t) for d, t in self.turn_history if t >= cutoff]
+
+    def _is_oscillating(self) -> bool:
+        """Detect oscillation pattern in recent turns."""
+        if len(self.turn_history) < 4:
+            return False
+
+        # Count alternations in the last turns
+        recent = [d for d, _ in self.turn_history[-6:]]
+        if len(recent) < 4:
+            return False
+
+        alternations = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
+        return alternations >= self.config.oscillation_threshold
+
+    def _should_escape(self) -> bool:
+        """Check if escape should be triggered."""
+        if self.escape_handler.in_cooldown():
+            return False
+        if self.escape_handler.escape_in_progress:
+            return False
+        return (
+            self._is_oscillating() or
+            self.forward_blocked_count >= self.config.blocked_count_threshold
+        )
+
+    # --- Escape Handling ---
+
+    def _handle_escape(self) -> None:
+        """Start or continue escape sequence."""
+        if self.escape_handler.escape_in_progress:
+            return
+
+        console.print("[bold yellow]Starting progressive escape[/bold yellow]")
+        self.logger.log_event("escape_start", {
+            "oscillating": self._is_oscillating(),
+            "blocked_count": self.forward_blocked_count,
+        })
+
+        result = self.escape_handler.start_escape()
+        self._execute_escape_result(result)
+
+    def _handle_escape_escalation(self) -> None:
+        """Escalate to next escape level."""
+        console.print("[yellow]Escape level timeout - escalating[/yellow]")
+        result = self.escape_handler.escalate()
+        self._execute_escape_result(result)
+
+    def _execute_escape_result(self, result) -> None:
+        """Execute the motion from an escape result."""
+        self.logger.log_event("escape_action", {
+            "level": result.level.name,
+            "direction": result.direction,
+            "message": result.message,
+        })
+
+        if result.level == EscapeLevel.TRAPPED:
+            # Give up
+            self.current_action = "trapped"
+            return
+
+        if result.direction is not None:
+            # Execute the turn
+            self._execute_turn(result.direction)
+
+            # Check if escape was successful (did we find a way out?)
+            # For now, assume success and reset
+            self.escape_handler.reset()
+            self._clear_escape_state()
+        elif not result.success and result.level == EscapeLevel.FULL_SCAN:
+            # Need chassis rotation - do it here with lidar
+            self._execute_chassis_360_scan()
+
+    def _execute_turn(self, angle_degrees: float) -> None:
+        """Execute a turn by the specified angle."""
+        console.print(f"[dim]Executing turn: {angle_degrees}°[/dim]")
+
+        # Calculate turn duration based on angle and speed
+        angle_rad = abs(math.radians(angle_degrees))
+        duration = angle_rad / self.config.turn_speed
+
+        # Turn direction
+        wz = self.config.turn_speed if angle_degrees > 0 else -self.config.turn_speed
+
+        self.move(0, 0, wz)
+        time.sleep(duration)
+        self.stop()
+
+        self.current_action = f"turned {angle_degrees:.0f}°"
+        self.last_significant_movement = time.time()
+
+    def _execute_chassis_360_scan(self) -> None:
+        """Execute a 360° chassis rotation to scan with lidar."""
+        console.print("[yellow]Performing 360° chassis scan[/yellow]")
+        self.speak("Scanning all around")
+
+        best_angle = None
+        best_distance = 0
+
+        # Rotate slowly, sampling lidar
+        rotation_speed = 0.8  # rad/s
+        sample_interval = 0.5  # seconds
+        total_duration = 8.0  # ~360° at 0.8 rad/s
+
+        start_time = time.time()
+        angle_traveled = 0
+
+        self.move(0, 0, rotation_speed)
+
+        while (time.time() - start_time) < total_duration:
+            time.sleep(sample_interval)
+            angle_traveled += rotation_speed * sample_interval
+
+            # Check front sector distance
+            front_distance = self.planner.sectors[0].min_distance if self.planner.sectors else 0
+
+            if front_distance > best_distance:
+                best_distance = front_distance
+                best_angle = math.degrees(angle_traveled)
+                console.print(f"[dim]Found opening at {best_angle:.0f}°: {best_distance:.2f}m[/dim]")
+
+        self.stop()
+
+        if best_angle is not None and best_distance > 0.8:
+            console.print(f"[green]Best opening at {best_angle:.0f}° with {best_distance:.2f}m[/green]")
+            # Turn to face the best direction
+            # We've already rotated past it, so calculate remaining turn
+            remaining_turn = best_angle - math.degrees(angle_traveled)
+            if remaining_turn < -180:
+                remaining_turn += 360
+            elif remaining_turn > 180:
+                remaining_turn -= 360
+
+            self._execute_turn(remaining_turn)
+            self.escape_handler.reset()
+            self._clear_escape_state()
+        else:
+            console.print("[red]No opening found in 360° scan[/red]")
+            # Escalate to trapped
+            self.escape_handler.escalate()
+
+    def _clear_escape_state(self) -> None:
+        """Clear escape-related state after successful escape."""
+        self.turn_history.clear()
+        self.forward_blocked_count = 0
+        self.last_significant_movement = time.time()
+
     def get_status(self) -> dict:
         """Get exploration status."""
         safety_status = self.safety.get_status()
         sensor_status = self.sensors.get_status()
         planner_status = self.planner.get_status()
+        escape_status = self.escape_handler.get_status()
 
         return {
             "running": self.running,
@@ -253,4 +455,10 @@ class ExplorationController:
             "safety": safety_status,
             "sensors": sensor_status,
             "planner": planner_status,
+            "escape": escape_status,
+            "oscillation": {
+                "turn_history_count": len(self.turn_history),
+                "forward_blocked_count": self.forward_blocked_count,
+                "is_oscillating": self._is_oscillating(),
+            },
         }

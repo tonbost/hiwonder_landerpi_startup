@@ -30,6 +30,8 @@ from exploration import (
     SafetyConfig,
     RemoteDataLogger,
     RemoteLogConfig,
+    ArmScanner,
+    ArmScannerConfig,
 )
 
 app = typer.Typer(help="LanderPi Autonomous Exploration (Sensor Fusion)")
@@ -321,6 +323,89 @@ rclpy.shutdown()
             pass
         return [], 0, 0
 
+    def move_arm_servo(self, servo_id: int, position: int, duration: float = 0.8) -> bool:
+        """Move a single arm servo to a position."""
+        cmd = json.dumps({
+            "action": "set_position",
+            "duration": duration,
+            "positions": [[servo_id, position]]
+        })
+        script = f'''
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import time
+
+rclpy.init()
+node = Node("arm_cmd_pub")
+pub = node.create_publisher(String, "/arm/cmd", 10)
+time.sleep(0.3)
+msg = String()
+msg.data = {repr(cmd)}
+pub.publish(msg)
+rclpy.spin_once(node, timeout_sec=0.3)
+node.destroy_node()
+rclpy.shutdown()
+print("OK")
+'''
+        try:
+            self.conn.run(f"cat > /tmp/arm_move.py << 'SCRIPT_EOF'\n{script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/arm_move.py landerpi-ros2:/tmp/arm_move.py", hide=True)
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "python3 /tmp/arm_move.py'",
+                hide=True, warn=True, timeout=5
+            )
+            return result.ok and "OK" in result.stdout
+        except Exception:
+            return False
+
+    def get_depth_stats(self) -> Optional[dict]:
+        """Get depth statistics from camera for arm scanner."""
+        depths, width, height = self.read_depth_image()
+        if not depths:
+            return None
+
+        # Filter valid depths (150mm - 3000mm)
+        valid_depths = [d for d in depths if 150 <= d <= 3000]
+        if not valid_depths:
+            return None
+
+        min_depth = min(valid_depths) / 1000.0  # Convert to meters
+        avg_depth = sum(valid_depths) / len(valid_depths) / 1000.0
+        valid_percent = len(valid_depths) / len(depths) * 100.0
+
+        return {
+            "min_depth": min_depth,
+            "avg_depth": avg_depth,
+            "valid_percent": valid_percent,
+        }
+
+    def create_arm_scanner(self) -> Optional[ArmScanner]:
+        """Create an ArmScanner instance if arm topic is available."""
+        # Check if arm topic exists
+        try:
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "ros2 topic list | grep /arm/cmd'",
+                hide=True, warn=True
+            )
+            if not result.ok:
+                console.print("[yellow]Arm topic not found - arm scanning disabled[/yellow]")
+                return None
+        except Exception:
+            return None
+
+        console.print("[green]Arm scanner enabled[/green]")
+        return ArmScanner(
+            arm_move_func=self.move_arm_servo,
+            get_depth_func=self.get_depth_stats,
+        )
+
     def run_exploration(
         self,
         duration_minutes: float = 30.0,
@@ -343,13 +428,17 @@ rclpy.shutdown()
             run_command=self.run_remote_command,
         )
 
-        # Create controller with remote logger
+        # Create arm scanner for escape maneuvers (optional)
+        arm_scanner = self.create_arm_scanner()
+
+        # Create controller with remote logger and arm scanner
         self.controller = ExplorationController(
             move_func=self.move,
             stop_func=self.stop_motors,
             get_battery_func=self.get_battery,
             safety_config=safety_config,
             logger=remote_logger,
+            arm_scanner=arm_scanner,  # For progressive escape
         )
 
         # Start exploration
