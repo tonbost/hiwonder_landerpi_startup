@@ -112,6 +112,17 @@ class ExplorationRunner:
         result = self.conn.run("lsusb | grep 3251", hide=True, warn=True)
         checks.append(("Depth camera", result.ok))
 
+        # Check camera topic (if camera USB detected)
+        if checks[-1][1]:  # If camera USB found
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /deptrum_ws/install/local_setup.bash 2>/dev/null; "
+                "ros2 topic list 2>/dev/null | grep /aurora/depth'",
+                hide=True, warn=True
+            )
+            checks.append(("Depth topic", result.ok))
+
         # Display results
         all_ok = True
         for name, ok in checks:
