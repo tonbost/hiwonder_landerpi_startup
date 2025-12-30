@@ -96,6 +96,7 @@ Available commands:
 - Movement: forward, backward, turn_left, turn_right, strafe_left, strafe_right, stop
 - Compound: look_around (360 scan), patrol (square pattern), come_here (approach user)
 - Mode: follow_me (continuous tracking - starts/stops a mode)
+- Explore: explore (start autonomous exploration), stop_exploring (stop exploration)
 - Arm: home, wave (if equipped)
 
 Parameters:
@@ -499,6 +500,17 @@ def execute_robot_command(command: dict) -> bool:
         if cmd == "follow_me":
             enable = params.get("enable", True)
             return toggle_follow_mode(enable)
+
+    elif action == "explore":
+        if cmd == "explore":
+            # Start exploration in background
+            console.print("[cyan]Starting exploration mode...[/cyan]")
+            # TODO: Integrate with exploration controller
+            return True
+        elif cmd == "stop_exploring":
+            # Stop exploration
+            console.print("[cyan]Stopping exploration...[/cyan]")
+            return True
 
     console.print(f"[yellow]Unknown action: {action}/{cmd}[/yellow]")
     return True
