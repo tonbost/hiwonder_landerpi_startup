@@ -130,6 +130,15 @@ class ExplorationController:
             sector_maxs = [s.min_distance for s in self.planner.sectors]  # Same for now
             self.logger.log_lidar(sector_mins, sector_maxs)
 
+        # Log depth stats if available
+        if depth_data and self.logger.session_dir:
+            valid_depths = [d for d in depth_data if 150 <= d <= 3000]
+            if valid_depths:
+                min_depth = min(valid_depths) / 1000.0  # mm to m
+                avg_depth = sum(valid_depths) / len(valid_depths) / 1000.0
+                valid_pct = len(valid_depths) / len(depth_data) * 100.0
+                self.logger.log_depth(min_depth, avg_depth, valid_pct)
+
     def step(self) -> bool:
         """
         Execute one control step.
