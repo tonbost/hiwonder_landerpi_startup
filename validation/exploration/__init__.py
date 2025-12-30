@@ -4,6 +4,7 @@ from .safety_monitor import SafetyMonitor, SafetyConfig
 from .frontier_planner import FrontierPlanner, FrontierConfig, Sector
 from .sensor_fusion import SensorFusion, SensorConfig, ObstacleState
 from .data_logger import DataLogger, LogConfig
+from .explorer import ExplorationController, ExplorationConfig
 
 __all__ = [
     "SafetyMonitor",
@@ -16,4 +17,6 @@ __all__ = [
     "ObstacleState",
     "DataLogger",
     "LogConfig",
+    "ExplorationController",
+    "ExplorationConfig",
 ]
