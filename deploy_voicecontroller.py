@@ -190,7 +190,7 @@ def configure():
 
 @app.command("install-service")
 def install_service():
-    """Install and enable systemd service on robot."""
+    """Install systemd service on robot (does NOT auto-enable)."""
     console.print("[yellow]Installing systemd service...[/yellow]")
 
     conn = get_connection()
@@ -204,15 +204,15 @@ def install_service():
 
     conn.put(str(service_file), "/tmp/tars-voice.service")
 
-    # Install service
+    # Install service (but don't enable - user must explicitly enable for boot)
     conn.sudo("cp /tmp/tars-voice.service /etc/systemd/system/", hide=True)
     conn.sudo("systemctl daemon-reload", hide=True)
-    conn.sudo("systemctl enable tars-voice", hide=True)
 
-    console.print("[green]Service installed and enabled[/green]")
+    console.print("[green]Service installed (not enabled for boot)[/green]")
     console.print("\nManagement commands:")
     console.print("  [cyan]sudo systemctl start tars-voice[/cyan]   # Start now")
     console.print("  [cyan]sudo systemctl stop tars-voice[/cyan]    # Stop")
+    console.print("  [cyan]sudo systemctl enable tars-voice[/cyan]  # Enable on boot")
     console.print("  [cyan]sudo systemctl status tars-voice[/cyan]  # Check status")
     console.print("  [cyan]journalctl -u tars-voice -f[/cyan]       # View logs")
 
