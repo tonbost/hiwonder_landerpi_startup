@@ -21,6 +21,7 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 | Arm control, gripper, servos | `landerpi-core` → `landerpi-arm` |
 | Lidar scanning, driver only | `landerpi-core` → `landerpi-lidar` |
 | Lidar autonomous modes | `landerpi-core` → `landerpi-motion` → `landerpi-lidar` |
+| Autonomous exploration | `landerpi-core` → `landerpi-motion` → `landerpi-lidar` |
 | Depth camera, RGB/depth/point cloud | `landerpi-core` → `landerpi-camera` |
 | Pick and place operations | `landerpi-core` → `landerpi-motion` → `landerpi-arm` |
 | Vision-guided manipulation | `landerpi-core` → `landerpi-camera` → `landerpi-arm` |
@@ -48,11 +49,12 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
    - Action groups for predefined movements
    - Pulse/angle conversion
 
-4. **landerpi-lidar** (requires core; modes require motion)
+4. **landerpi-lidar** (requires core; modes/exploration require motion)
    - LD19/MS200 protocol details
    - Driver management
    - Scan data reading
    - Autonomous modes (obstacle avoidance, tracking, guard)
+   - Autonomous exploration (frontier-based; depth camera planned)
 
 5. **landerpi-camera** (requires core)
    - Aurora 930 depth camera setup
@@ -67,10 +69,11 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 2. **Motion Control** - Direct serial control via SDK, ROS2 control via Docker
 3. **Arm Control** - 5-DOF arm servo positioning, gripper operations, kinematics
 4. **Lidar Operations** - Driver management, scan data, autonomous modes
-5. **Depth Camera** - Aurora 930 streaming, RGB/depth/point cloud data
-6. **Voice Control** - TARS voice assistant deployment, testing, service management
-7. **Deployment** - Setup scripts, Docker image management, SDK deployment
-8. **Troubleshooting** - Diagnose and resolve robot issues
+5. **Autonomous Exploration** - Frontier-based exploration with sensor fusion
+6. **Depth Camera** - Aurora 930 streaming, RGB/depth/point cloud data
+7. **Voice Control** - TARS voice assistant deployment, testing, service management
+8. **Deployment** - Setup scripts, Docker image management, SDK deployment
+9. **Troubleshooting** - Diagnose and resolve robot issues
 
 ## Testing Modes
 
@@ -213,6 +216,13 @@ uv run python validation/test_lidar.py scan --samples 5
 uv run python validation/test_lidar.py test --mode 1 --duration 10 --yes  # Obstacle avoidance
 uv run python validation/test_lidar.py test --mode 2 --duration 10 --yes  # Tracking
 uv run python validation/test_lidar.py test --mode 3 --duration 10 --yes  # Guard
+
+# Autonomous exploration (load: core + motion + lidar) - ROBOT WILL MOVE!
+uv run python validation/test_exploration.py status                    # Check prerequisites
+uv run python validation/test_exploration.py start --yes               # Start (30 min default)
+uv run python validation/test_exploration.py start --duration 5 --yes  # Custom duration
+uv run python validation/test_exploration.py start --rosbag --yes      # With ROS2 bag recording
+uv run python validation/test_exploration.py stop                      # Emergency stop
 
 # Depth camera (load: core + camera)
 uv run python validation/test_cameradepth.py check         # Check camera + Docker

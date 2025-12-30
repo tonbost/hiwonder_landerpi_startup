@@ -1,6 +1,6 @@
 ---
 name: landerpi-lidar
-description: Lidar control for HiWonder LanderPi robot. Provides LD19/MS200 lidar protocol details, driver management, scan data reading, and autonomous modes (obstacle avoidance, tracking, guard). Requires landerpi-core skill; autonomous modes also require landerpi-motion skill.
+description: Lidar control for HiWonder LanderPi robot. Provides LD19/MS200 lidar protocol details, driver management, scan data reading, autonomous modes (obstacle avoidance, tracking, guard), and autonomous exploration. Requires landerpi-core skill; autonomous modes and exploration also require landerpi-motion skill.
 ---
 
 # LanderPi Lidar Control
@@ -222,3 +222,67 @@ docker run --rm --privileged -v /dev:/dev landerpi-ros2:latest \
 3. Check battery: `uv run python validation/test_chassis_direct.py status`
 
 **Solution:** Ensure motor controller SDK is installed and battery is charged.
+
+## Autonomous Exploration
+
+Frontier-based autonomous exploration using sensor fusion (lidar + depth camera). Robot autonomously explores while avoiding obstacles.
+
+> **Note:** Currently uses lidar only. Depth camera integration is planned.
+
+**Prerequisites:**
+- Load `landerpi-core` skill
+- Load `landerpi-motion` skill
+- ROS2 stack deployed (`deploy_ros2_stack.py deploy`)
+
+### Exploration Commands
+
+| Command | Purpose |
+|---------|---------|
+| `uv run python validation/test_exploration.py status` | Check prerequisites |
+| `uv run python validation/test_exploration.py start --yes` | Start exploration (30 min) |
+| `uv run python validation/test_exploration.py start --duration 5 --yes` | Custom duration |
+| `uv run python validation/test_exploration.py start --rosbag --yes` | With ROS2 bag recording |
+| `uv run python validation/test_exploration.py stop` | Emergency stop |
+
+### Exploration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--duration` | 30 | Max runtime in minutes |
+| `--min-battery` | 6.6 | Battery cutoff voltage |
+| `--rosbag` | Off | Enable ROS2 bag recording |
+| `--yes` | Off | Skip confirmation prompt |
+
+### How It Works
+
+1. **Frontier Detection** - Identifies unexplored boundaries from lidar scans
+2. **Goal Selection** - Chooses nearest frontier as navigation goal
+3. **Obstacle Avoidance** - Uses lidar for real-time collision prevention
+4. **Safety Monitoring** - Battery monitoring, runtime limits, emergency stop
+5. **State Machine** - IDLE → EXPLORING → AVOIDING → STOPPED
+
+### Exploration Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  ExplorationController                       │
+│  ┌──────────────┐  ┌────────────────┐  ┌────────────────┐  │
+│  │FrontierPlanner│  │ SafetyMonitor  │  │  DataLogger    │  │
+│  │  (goals)      │  │ (battery/time) │  │  (metrics)     │  │
+│  └──────────────┘  └────────────────┘  └────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │   /cmd_vel (Twist)    │
+              │  via landerpi-ros2    │
+              └───────────────────────┘
+```
+
+### Module Files
+
+- `validation/test_exploration.py` - CLI entry point
+- `validation/exploration/explorer.py` - Main controller and state machine
+- `validation/exploration/frontier_planner.py` - Frontier detection and goal selection
+- `validation/exploration/safety_monitor.py` - Battery and runtime monitoring
+- `validation/exploration/data_logger.py` - Metrics and ROS2 bag recording

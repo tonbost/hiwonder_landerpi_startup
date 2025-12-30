@@ -107,6 +107,13 @@ uv run python validation/test_lidar_ros2.py scan --samples 5  # Read scan data
 uv run python validation/test_cameradepth_ros2.py check     # Camera topics
 uv run python validation/test_cameradepth_ros2.py stream    # Read streams
 
+# Autonomous exploration (robot will MOVE! requires ROS2 stack)
+uv run python validation/test_exploration.py status                    # Check prerequisites
+uv run python validation/test_exploration.py start --yes               # Start (30 min default)
+uv run python validation/test_exploration.py start --duration 5 --yes  # Custom duration
+uv run python validation/test_exploration.py start --rosbag --yes      # With ROS2 bag recording
+uv run python validation/test_exploration.py stop                      # Emergency stop
+
 # Voice Control (runs ON the robot, requires WonderEcho Pro + ROS2 stack)
 uv run python deploy_voicecontroller.py deploy   # Full deployment (script + deps + service)
 uv run python deploy_voicecontroller.py upload   # Upload script only
@@ -198,6 +205,19 @@ uv run python deploy_voicecontroller.py test     # Run check on robot
 **`validation/test_cameradepth_ros2.py`** - ROS2-based camera test (requires deployed stack)
 - Uses `/aurora/*` topics via `docker exec landerpi-ros2`
 - Commands: `check`, `stream`, `status`
+
+**`validation/test_exploration.py`** - Autonomous exploration test (requires ROS2 stack)
+- Frontier-based exploration with sensor fusion (lidar + depth camera; depth camera planned)
+- Uses `ExplorationController` from `validation/exploration/` module
+- 10 Hz control loop with safety limits (battery cutoff, max runtime)
+- Commands: `start`, `stop`, `status`
+- Options: `--duration` (minutes), `--min-battery` (voltage), `--rosbag` (recording)
+
+**`validation/exploration/`** - Exploration module
+- `explorer.py` - `ExplorationController` main class, state machine (IDLE → EXPLORING → AVOIDING → STOPPED)
+- `frontier_planner.py` - Frontier detection and goal selection from lidar scans
+- `safety_monitor.py` - Battery monitoring, runtime limits, emergency stop
+- `data_logger.py` - Exploration metrics and optional ROS2 bag recording
 
 **`ros2_nodes/arm_controller/`** - ROS2 arm controller node
 - Subscribes to `/arm/cmd` (JSON commands)
