@@ -44,21 +44,22 @@ class SectorData:
 class ExplorationConfig:
     """Exploration configuration."""
     # Motion
-    forward_speed: float = 0.2  # m/s
-    turn_speed: float = 1.5  # rad/s (increased for better turning)
+    forward_speed: float = 0.35  # m/s (fast when clear)
+    turn_speed: float = 1.5  # rad/s
 
-    # Safety
-    obstacle_stop_dist: float = 0.25  # m - emergency stop
-    obstacle_slow_dist: float = 0.5   # m - slow down
+    # Safety - closer approach to obstacles
+    obstacle_stop_dist: float = 0.15  # m - emergency stop (can get 15cm from walls)
+    obstacle_slow_dist: float = 0.30  # m - slow down
+    sector_blocked_dist: float = 0.40  # m - sector considered blocked
 
     # Timing
-    loop_rate_hz: float = 5.0  # Control loop rate
-    stuck_timeout: float = 15.0  # seconds without progress = stuck
-    escape_duration: float = 2.0  # seconds to back up
+    loop_rate_hz: float = 8.0  # Control loop rate (faster)
+    stuck_timeout: float = 8.0  # seconds without progress = stuck
+    escape_duration: float = 1.5  # seconds to back up
 
     # Turn commitment - prevents oscillation
-    min_turn_duration: float = 0.8  # seconds to commit to a turn direction
-    turn_complete_threshold: float = 20.0  # degrees - consider turn complete when within this
+    min_turn_duration: float = 0.6  # seconds to commit to a turn direction
+    turn_complete_threshold: float = 25.0  # degrees - consider turn complete when within this
 
     # Battery
     battery_cutoff: float = 6.6  # V
@@ -256,55 +257,46 @@ for _ in range(5):
 
     def read_lidar(self) -> tuple:
         """Read lidar scan. Returns (ranges, angle_min, angle_increment)."""
-        # Write scan reader script to temp file
-        script = '''#!/usr/bin/env python3
-import json, math, time
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-
-class R(Node):
-    def __init__(self):
-        super().__init__("r")
-        self.d = None
-        q = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        self.create_subscription(LaserScan, "/scan", self.cb, q)
-    def cb(self, m):
-        if not self.d:
-            self.d = {"r": list(m.ranges), "a": m.angle_min, "i": m.angle_increment}
-
-rclpy.init()
-n = R()
-t = time.time()
-while not n.d and time.time() - t < 2:
-    rclpy.spin_once(n, timeout_sec=0.1)
-if n.d:
-    print(json.dumps(n.d))
-rclpy.shutdown()
-'''
+        # Use ros2 topic echo directly - much faster than Python script
         try:
-            # Write script to temp file
-            script_path = "/tmp/lidar_reader.py"
-            with open(script_path, "w") as f:
-                f.write(script)
-
-            # Copy to container and run
-            subprocess.run(
-                f"docker cp {script_path} landerpi-ros2:/tmp/lidar_reader.py",
-                shell=True, capture_output=True, timeout=5
-            )
-
             result = subprocess.run(
                 'docker exec landerpi-ros2 bash -c "'
                 'source /opt/ros/humble/setup.bash && '
                 'source /ros2_ws/install/setup.bash 2>/dev/null; '
-                'python3 /tmp/lidar_reader.py"',
-                shell=True, capture_output=True, text=True, timeout=10
+                'timeout 1 ros2 topic echo --once /scan --no-arr 2>/dev/null | head -20"',
+                shell=True, capture_output=True, text=True, timeout=3
             )
             if result.returncode == 0 and result.stdout.strip():
-                data = json.loads(result.stdout.strip())
-                return data['r'], data['a'], data['i']
+                # Parse YAML output for angle_min and angle_increment
+                angle_min = 0.0
+                angle_inc = 0.0
+                for line in result.stdout.split('\n'):
+                    if 'angle_min:' in line:
+                        angle_min = float(line.split(':')[1].strip())
+                    elif 'angle_increment:' in line:
+                        angle_inc = float(line.split(':')[1].strip())
+
+                # Get ranges separately (they're large)
+                result2 = subprocess.run(
+                    'docker exec landerpi-ros2 bash -c "'
+                    'source /opt/ros/humble/setup.bash && '
+                    'source /ros2_ws/install/setup.bash 2>/dev/null; '
+                    'timeout 1 ros2 topic echo --once /scan --field ranges 2>/dev/null"',
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+                if result2.returncode == 0 and result2.stdout.strip():
+                    # Parse ranges array
+                    ranges = []
+                    for line in result2.stdout.split('\n'):
+                        line = line.strip()
+                        if line.startswith('- '):
+                            try:
+                                val = float(line[2:])
+                                ranges.append(val)
+                            except ValueError:
+                                pass
+                    if ranges:
+                        return ranges, angle_min, angle_inc
         except Exception:
             pass
         return [], 0.0, 0.0
@@ -367,7 +359,7 @@ class FrontierPlanner:
         normalized = (angle_deg + 22.5) % 360  # Shift by half sector width
         return int(normalized / 45) % 8
 
-    def get_best_direction(self, min_dist: float = 0.5) -> tuple:
+    def get_best_direction(self, min_dist: float = 0.40) -> tuple:
         """Get best direction to move. Returns (sector, reason)."""
         # Priority: Front > Front-Left/Right > Left/Right > Back
         priority_order = [0, 7, 1, 6, 2, 5, 3, 4]  # Indices
@@ -379,7 +371,7 @@ class FrontierPlanner:
 
         # All blocked - find most open
         best = max(self.sectors, key=lambda s: s.min_distance)
-        if best.min_distance > 0.3:
+        if best.min_distance > 0.20:  # Even 20cm clearance is usable
             return best, f"best option at {best.min_distance:.2f}m"
 
         return None, "all blocked"
@@ -530,7 +522,7 @@ class Explorer:
                 return
 
         # Not turning - evaluate direction
-        best_sector, reason = self.planner.get_best_direction(self.config.obstacle_slow_dist)
+        best_sector, reason = self.planner.get_best_direction(self.config.sector_blocked_dist)
 
         if best_sector is None:
             # All blocked - stop
@@ -617,7 +609,7 @@ def main():
     # Explore command
     explore_parser = subparsers.add_parser("explore", help="Start exploration")
     explore_parser.add_argument("--duration", type=float, default=5.0, help="Duration in minutes")
-    explore_parser.add_argument("--speed", type=float, default=0.2, help="Forward speed (m/s)")
+    explore_parser.add_argument("--speed", type=float, default=0.35, help="Forward speed (m/s)")
 
     # Stop command
     subparsers.add_parser("stop", help="Stop motors")
