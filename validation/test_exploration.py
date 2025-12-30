@@ -374,7 +374,14 @@ rclpy.shutdown()
                     last_status_time = time.time()
                     status = self.controller.get_status()
                     remaining = status['safety']['remaining_minutes']
-                    console.print(f"[dim]Status: {remaining:.1f} min remaining, action: {status['action']}[/dim]")
+                    sensors = status.get('sensors', {})
+                    depth_m = sensors.get('depth_m', 'N/A')
+                    lidar_m = sensors.get('lidar_m', 'N/A')
+                    console.print(
+                        f"[dim]Status: {remaining:.1f} min remaining | "
+                        f"depth: {depth_m}m, lidar: {lidar_m}m | "
+                        f"action: {status['action']}[/dim]"
+                    )
 
                 # Rate limiting
                 elapsed = time.time() - loop_start
