@@ -31,9 +31,19 @@ TOPICS = {
 
 def load_config() -> dict:
     """Load connection config from config.json if exists."""
+    # First check project root (parent of validation/)
+    config_path = Path(__file__).parent.parent / "config.json"
+    if config_path.exists():
+        return json.loads(config_path.read_text())
+    # Fallback to same directory
     config_path = Path(__file__).parent / "config.json"
     if config_path.exists():
         return json.loads(config_path.read_text())
+    # Config not found - print helpful message
+    console.print("[yellow]Warning: config.json not found[/yellow]")
+    console.print(f"  Checked: {Path(__file__).parent.parent / 'config.json'}")
+    console.print(f"  Checked: {Path(__file__).parent / 'config.json'}")
+    console.print("[dim]Create config.json with: {\"host\": \"<IP>\", \"user\": \"<USER>\", \"password\": \"<PASS>\"}[/dim]")
     return {}
 
 

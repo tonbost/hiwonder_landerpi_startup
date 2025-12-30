@@ -55,8 +55,10 @@ except ImportError:
 app = typer.Typer(help="Voice Controller for LanderPi Robot")
 console = Console()
 
-# Robot connection config
-CONFIG_FILE = Path(__file__).parent / "config.json"
+# Robot connection config - check project root first, then same directory
+CONFIG_FILE = Path(__file__).parent.parent / "config.json"
+if not CONFIG_FILE.exists():
+    CONFIG_FILE = Path(__file__).parent / "config.json"
 
 # Robot control prompt for Claude Haiku
 ROBOT_CONTROL_PROMPT = """You are TARS, a witty AI controlling a LanderPi robot. Your job is to interpret voice commands and generate robot control actions.
@@ -95,6 +97,11 @@ def load_config() -> dict:
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE) as f:
             return json.load(f)
+    # Config not found - print helpful message
+    console.print("[yellow]Warning: config.json not found[/yellow]")
+    console.print(f"  Checked: {Path(__file__).parent.parent / 'config.json'}")
+    console.print(f"  Checked: {Path(__file__).parent / 'config.json'}")
+    console.print("[dim]Create config.json with: {\"host\": \"<IP>\", \"user\": \"<USER>\", \"password\": \"<PASS>\"}[/dim]")
     return {}
 
 
