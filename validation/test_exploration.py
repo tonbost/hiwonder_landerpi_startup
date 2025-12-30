@@ -224,6 +224,92 @@ rclpy.shutdown()
             pass
         return [], 0.0, 0.0
 
+    def read_depth_image(self) -> tuple:
+        """Read depth image from camera. Returns (depth_data, width, height)."""
+        # Script to read one depth image - outputs JSON with dimensions and data
+        depth_script = """
+import sys
+import json
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+import time
+
+class DepthReader(Node):
+    def __init__(self):
+        super().__init__('depth_reader')
+        self.data = None
+        qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        self.sub = self.create_subscription(Image, '/aurora/depth/image_raw', self.cb, qos)
+
+    def cb(self, msg):
+        if self.data is None:
+            # MONO16 = 2 bytes per pixel, little-endian
+            width = msg.width
+            height = msg.height
+            # Extract depth values from raw data
+            depths = []
+            for i in range(0, len(msg.data), 2):
+                if i + 1 < len(msg.data):
+                    # Little-endian 16-bit
+                    val = msg.data[i] | (msg.data[i + 1] << 8)
+                    depths.append(val)
+            self.data = {
+                'width': width,
+                'height': height,
+                'depths': depths,
+            }
+
+rclpy.init()
+node = DepthReader()
+start = time.time()
+while node.data is None and (time.time() - start) < 2.0:
+    rclpy.spin_once(node, timeout_sec=0.1)
+if node.data:
+    # Only output dimensions and sample to reduce data size
+    # For fusion, we only need center region anyway
+    w, h = node.data['width'], node.data['height']
+    depths = node.data['depths']
+    # Extract center 200x160 region (larger than fusion needs)
+    cx, cy = w // 2, h // 2
+    hw, hh = 100, 80
+    center_depths = []
+    for y in range(max(0, cy - hh), min(h, cy + hh)):
+        for x in range(max(0, cx - hw), min(w, cx + hw)):
+            idx = y * w + x
+            if idx < len(depths):
+                center_depths.append(depths[idx])
+    out = {
+        'width': min(hw * 2, w),
+        'height': min(hh * 2, h),
+        'depths': center_depths,
+    }
+    print(json.dumps(out))
+node.destroy_node()
+rclpy.shutdown()
+"""
+        try:
+            # Write script to temp file on robot and copy into container
+            self.conn.run(f"cat > /tmp/read_depth.py << 'SCRIPT_EOF'\n{depth_script}\nSCRIPT_EOF", hide=True)
+            self.conn.run("docker cp /tmp/read_depth.py landerpi-ros2:/tmp/read_depth.py", hide=True)
+
+            # Run inside the already-running landerpi-ros2 container
+            result = self.conn.run(
+                "docker exec landerpi-ros2 bash -c '"
+                "source /opt/ros/humble/setup.bash && "
+                "source /ros2_ws/install/setup.bash 2>/dev/null; "
+                "source /deptrum_ws/install/local_setup.bash 2>/dev/null; "
+                "python3 /tmp/read_depth.py'",
+                hide=True, warn=True, timeout=10
+            )
+            if result.ok and result.stdout.strip():
+                data = json.loads(result.stdout.strip())
+                return data['depths'], data['width'], data['height']
+        except Exception:
+            pass
+        return [], 0, 0
+
     def run_exploration(
         self,
         duration_minutes: float = 30.0,
