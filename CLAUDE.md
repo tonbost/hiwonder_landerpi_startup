@@ -126,6 +126,13 @@ uv run python deploy_voicecontroller.py test     # Run check on robot
 # python3 ~/robot_voicecontroller.py loop --wake-word  # Wake word mode ("Hey TARS")
 # python3 ~/robot_voicecontroller.py test-tts "Hello"  # Test TTS
 # python3 ~/robot_voicecontroller.py test-llm "go forward"  # Test LLM command generation
+
+# Autonomous Exploration (uses config.json)
+uv run python validation/test_exploration.py start --yes        # Start exploration (30 min)
+uv run python validation/test_exploration.py start --duration 60 --yes  # 60 min exploration
+uv run python validation/test_exploration.py start --rosbag --yes       # With ROS2 bag recording
+uv run python validation/test_exploration.py stop               # Stop exploration
+uv run python validation/test_exploration.py status             # Check robot status
 ```
 
 ## Architecture
@@ -298,6 +305,19 @@ WonderEcho Pro (arecord) → faster-whisper (ASR) → Bedrock Haiku (LLM)
 **AWS IAM Policy** (`aws/landerpi-bedrock-policy.json`):
 - BedrockInvokeOnly: Minimal permissions for robot
 - Only allows `bedrock:InvokeModel` on Claude models
+
+**`validation/exploration/`** - Autonomous exploration package
+- `explorer.py` - Main exploration controller
+- `sensor_fusion.py` - Depth camera + lidar fusion
+- `frontier_planner.py` - Direction selection based on freshness
+- `safety_monitor.py` - Battery and runtime monitoring
+- `data_logger.py` - Logging for future SLAM
+
+**`validation/test_exploration.py`** - Exploration CLI
+- Start/stop autonomous exploration
+- Sensor fusion: depth camera (20cm stop) + lidar (360° awareness)
+- Frontier-based exploration (seeks unexplored directions)
+- Safety: runtime limit + battery cutoff
 
 ## Key Patterns
 
