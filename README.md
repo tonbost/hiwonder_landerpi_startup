@@ -139,6 +139,7 @@ The ROS2 stack:
 - Runs in Docker with `restart: unless-stopped` (survives reboots)
 - Includes `cmd_vel_bridge` node for velocity commands
 - Publishes lidar data on `/scan`, camera on `/aurora/*`
+- Includes `depth_stats` node for processed depth data on `/depth_stats`
 
 ### Step 7: Validate Hardware (ROS2)
 

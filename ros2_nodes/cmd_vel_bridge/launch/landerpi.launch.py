@@ -8,6 +8,7 @@ Launches all LanderPi nodes:
 - lidar_driver - LD19/MS200 lidar
 - battery_monitor - Battery voltage monitoring
 - camera_driver - Aurora 930 (if workspace available)
+- depth_stats - Depth camera stats for exploration (if camera available)
 """
 
 import os
@@ -120,6 +121,23 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_camera')),
     ) if camera_available else LogInfo(msg='Camera driver not available (deptrum_ws not found)')
 
+    # depth_stats node - processes depth images for exploration
+    # Only useful when camera driver is available
+    depth_stats_node = Node(
+        package='depth_stats',
+        executable='depth_stats_node',
+        name='depth_stats',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_camera')),
+        parameters=[{
+            'center_width': 200,
+            'center_height': 160,
+            'min_valid_depth': 150,
+            'max_valid_depth': 3000,
+            'publish_rate': 10.0,
+        }],
+    ) if camera_available else LogInfo(msg='depth_stats skipped (no camera)')
+
     return LaunchDescription([
         # Arguments
         enable_lidar_arg,
@@ -137,6 +155,7 @@ def generate_launch_description():
         lidar_driver_node,
         battery_monitor_node,
         camera_launch,
+        depth_stats_node,
 
         LogInfo(msg='LanderPi ROS2 stack launched'),
     ])

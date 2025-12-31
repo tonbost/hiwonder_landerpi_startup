@@ -333,37 +333,99 @@ class CameraValidator(Node):
 - **SDK Logs:** `/tmp/deptrum-stream.log`
 - **Latest Log:** `/tmp/node.INFO`
 
+## Depth Stats Node
+
+The `depth_stats` ROS2 node processes raw depth images and publishes simple stats for exploration.
+
+### Why It Exists
+
+The raw `/aurora/depth/image_raw` topic publishes mono16 images (2 bytes per pixel). Parsing this via `ros2 topic echo` is unreliable because:
+- Each pixel is stored as 2 uint8 bytes (little-endian uint16)
+- `ros2 topic echo --field data` times out or truncates
+- Raw byte parsing would be complex and error-prone
+
+The `depth_stats` node solves this by:
+1. Subscribing to `/aurora/depth/image_raw`
+2. Properly converting bytes to numpy uint16 array
+3. Extracting center region (200x160 pixels)
+4. Publishing JSON stats to `/depth_stats`
+
+### Topic: /depth_stats
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | float | Unix timestamp |
+| `width` | int | Image width |
+| `height` | int | Image height |
+| `center_region` | str | Region size (e.g., "200x160") |
+| `valid_count` | int | Pixels with valid depth |
+| `valid_percent` | float | Percentage valid (0-100) |
+| `min_depth_mm` | int | Minimum depth in mm |
+| `avg_depth_mm` | int | Average depth in mm |
+| `min_depth_m` | float | Minimum depth in meters |
+| `avg_depth_m` | float | Average depth in meters |
+
+### Node Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `center_width` | 200 | Pixels from center (horizontal) |
+| `center_height` | 160 | Pixels from center (vertical) |
+| `min_valid_depth` | 150 | Minimum valid depth (mm) |
+| `max_valid_depth` | 3000 | Maximum valid depth (mm) |
+| `publish_rate` | 10.0 | Publishing rate (Hz) |
+
+### Reading Depth Stats
+
+```bash
+# Check topic exists
+docker exec landerpi-ros2 bash -c "source /opt/ros/humble/setup.bash && ros2 topic list | grep depth_stats"
+
+# Read stats
+docker exec landerpi-ros2 bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo --once --full-length /depth_stats"
+```
+
+Example output:
+```
+data: '{"timestamp": 1767199795.106, "width": 640, "height": 400, "center_region": "200x160", "total_pixels": 32000, "valid_count": 20689, "valid_percent": 64.7, "min_depth_mm": 345, "avg_depth_mm": 1103, "min_depth_m": 0.345, "avg_depth_m": 1.104}'
+```
+
+### Related Files
+
+| File | Purpose |
+|------|---------|
+| `ros2_nodes/depth_stats/` | ROS2 package |
+| `ros2_nodes/depth_stats/depth_stats_node.py` | Node implementation |
+| `docker/docker-compose.yml` | Mounts and builds the node |
+| `ros2_nodes/cmd_vel_bridge/launch/landerpi.launch.py` | Launches the node |
+
 ## Exploration Integration
 
 The depth camera is integrated with autonomous exploration for enhanced obstacle detection.
 
 ### How It's Used
 
-- **Topic:** `/aurora/depth/image_raw` (MONO16, millimeters)
-- **Region:** Center 200x160 pixels extracted for efficiency
-- **Fusion:** Combined with lidar using conservative min() for obstacle distance
-- **Logging:** Depth stats (`min_m`, `avg_m`, `valid_pct`) logged to `depth_summary.jsonl`
+- **Topic:** `/depth_stats` (JSON stats from depth_stats node)
+- **Region:** Center 200x160 pixels processed by depth_stats node
+- **Access:** `ros2_hardware.py` reads `/depth_stats` topic
+- **Usage:** Arm scanner uses depth during escape maneuvers
 
-### Exploration Status Display
+### Arm Glance During Escape
 
-During exploration, the status shows both sensors:
+During progressive escape, the arm scanner pans left/right and reads depth:
 ```
-Status: 29.5 min remaining | depth: 0.486m, lidar: 0.506m | action: moving forward
+Arm glance: left=1.62m, right=1.02m
 ```
 
-### Prerequisites Check
-
-Exploration checks for the depth topic:
-```
-Depth camera: OK
-Depth topic: OK
-```
+This helps the robot choose which direction to turn when stuck.
 
 ### Related Files
 
-- `validation/test_exploration.py` - `read_depth_image()` method reads camera
-- `validation/exploration/sensor_fusion.py` - `update_depth()` processes depth data
-- `validation/exploration/remote_data_logger.py` - `log_depth()` records stats
+| File | Purpose |
+|------|---------|
+| `validation/exploration/ros2_hardware.py` | `read_depth()` reads /depth_stats |
+| `validation/exploration/arm_scanner.py` | Uses depth for escape direction |
+| `validation/exploration/sensor_fusion.py` | Combines lidar + depth |
 
 See `landerpi-lidar` skill for full exploration documentation.
 

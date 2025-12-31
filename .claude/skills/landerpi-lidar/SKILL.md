@@ -308,12 +308,17 @@ Exploration runs on Mac with SSH sensor reads. Slower due to network overhead (~
 
 ### How It Works
 
-1. **Sensor Reading** - Reads lidar `/scan` and depth camera `/aurora/depth/image_raw`
+1. **Sensor Reading** - Reads lidar `/scan` and depth stats from `/depth_stats` (via depth_stats node)
 2. **Sector Analysis** - Divides 360° into 8 sectors, tracks "freshness" (time since visited)
 3. **Frontier Selection** - Chooses sector with lowest freshness that is not blocked
 4. **Progressive Escape** - Detects oscillation/stuck patterns, escalates through 3 escape levels
 5. **Obstacle Avoidance** - Stop at 15cm, slow at 30cm, sector blocked at 40cm
 6. **Safety Monitoring** - Battery monitoring, runtime limits, emergency stop
+
+**Depth Camera Integration:**
+- The `depth_stats` node (see `landerpi-camera` skill) processes raw depth images
+- Publishes JSON stats to `/depth_stats` with `min_depth_m`, `avg_depth_m`, `valid_percent`
+- `ros2_hardware.py` reads this topic for obstacle detection and arm scanner
 
 ### Exploration Parameters
 

@@ -24,7 +24,7 @@ class ROS2Config:
     # Topics
     cmd_vel_topic: str = "/cmd_vel"
     scan_topic: str = "/scan"
-    depth_topic: str = "/aurora/depth/image_raw"
+    depth_stats_topic: str = "/depth_stats"  # Processed depth stats (JSON)
     arm_cmd_topic: str = "/arm/cmd"
     arm_state_topic: str = "/arm/state"
     battery_topic: str = "/battery"
@@ -223,7 +223,10 @@ sys.path.insert(0, '{self._sdk_path}')
     # --- Depth Camera ---
 
     def read_depth(self) -> Optional[dict]:
-        """Read depth camera stats via /aurora/depth/image_raw.
+        """Read depth camera stats via /depth_stats topic.
+
+        The depth_stats node processes the raw mono16 depth image and
+        publishes JSON stats with min_depth_m, avg_depth_m, valid_percent.
 
         Uses throttling to avoid slowing down the control loop.
         Returns cached result if called too frequently.
@@ -232,8 +235,7 @@ sys.path.insert(0, '{self._sdk_path}')
             Dict with 'min_depth', 'avg_depth', 'valid_percent' keys (depths in meters),
             or None if read failed.
         """
-        import time as _time
-        now = _time.time()
+        now = time.time()
 
         # Return cached result if called too frequently
         if now - self._last_depth_time < self._depth_read_interval:
@@ -241,39 +243,36 @@ sys.path.insert(0, '{self._sdk_path}')
 
         self._last_depth_time = now
 
-        # Use ros2 topic echo with timeout and parse output
-        # This is faster than running a Python script with rclpy
-        cmd = (
-            f"timeout 1 ros2 topic echo --once {self.config.depth_topic} "
-            "--field data 2>/dev/null | head -100"
-        )
-        ok, output = self._run_docker(cmd, timeout=2.0)
+        # Read from /depth_stats topic (JSON format from depth_stats_node)
+        # Note: --field data times out, and default output truncates long strings
+        # Using --full-length to get complete JSON
+        cmd = f"timeout 2 ros2 topic echo --once --full-length {self.config.depth_stats_topic} 2>/dev/null"
+        ok, output = self._run_docker(cmd, timeout=3.0)
 
         if not ok or not output:
-            return None
+            return self._cached_depth  # Return last good data
 
-        # Parse depth data from output (first 100 values from center-ish region)
-        # Format: "- 0\n- 0\n- 1234\n..."
         try:
-            depths = []
+            # Parse output format: "data: '{JSON}'\n---"
+            # Extract JSON from the data: line
             for line in output.split('\n'):
                 line = line.strip()
-                if line.startswith('- '):
-                    val = int(line[2:])
-                    if 150 <= val <= 3000:  # Valid depth range in mm
-                        depths.append(val)
+                if line.startswith("data: "):
+                    # Remove "data: " prefix and surrounding quotes
+                    json_str = line[6:].strip().strip("'").strip('"')
+                    stats = json.loads(json_str)
 
-            if depths:
-                self._cached_depth = {
-                    "min_depth": min(depths) / 1000.0,
-                    "avg_depth": sum(depths) / len(depths) / 1000.0,
-                    "valid_percent": len(depths),  # Approximation
-                }
-            else:
-                self._cached_depth = None
+                    # Convert to the format expected by exploration code
+                    self._cached_depth = {
+                        "min_depth": stats.get("min_depth_m", 0.0),
+                        "avg_depth": stats.get("avg_depth_m", 0.0),
+                        "valid_percent": stats.get("valid_percent", 0.0),
+                    }
+                    break
 
-        except (ValueError, IndexError):
-            self._cached_depth = None
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Keep last good data on parse error
+            pass
 
         return self._cached_depth
 
@@ -398,6 +397,6 @@ for _ in range(5):
             "config": {
                 "cmd_vel_topic": self.config.cmd_vel_topic,
                 "scan_topic": self.config.scan_topic,
-                "depth_topic": self.config.depth_topic,
+                "depth_stats_topic": self.config.depth_stats_topic,
             }
         }
