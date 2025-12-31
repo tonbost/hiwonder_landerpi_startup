@@ -25,6 +25,7 @@ remote_scan_*/
 !.claude/skills/landerpi-arm/
 !.claude/skills/landerpi-camera/
 !.claude/skills/landerpi-voice/
+!.claude/skills/landerpi-dev/
 
 # Utility scripts not needed for core functionality
 extract_pdf*.py
