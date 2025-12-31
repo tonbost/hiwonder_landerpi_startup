@@ -37,11 +37,15 @@ class EscapeConfig:
     reverse_distance: float = 0.5  # meters (approximate)
     reverse_speed: float = 0.15  # m/s
     reverse_duration: float = 2.0  # seconds
-    turn_180_duration: float = 2.5  # seconds for 180° turn
+    turn_180_duration: float = 2.5  # seconds for 180° turn (base, before multiplier)
 
     # Level 3: Full scan
     scan_turn_speed: float = 0.8  # rad/s for chassis rotation
-    full_rotation_duration: float = 8.0  # seconds for 360°
+    full_rotation_duration: float = 8.0  # seconds for 360° (base, before multiplier)
+
+    # Carpet/friction compensation - mecanum wheels slip on carpet
+    # Default 2.5x multiplier based on observed 90° command → ~30° actual rotation
+    turn_time_multiplier: float = 2.5
 
 
 @dataclass

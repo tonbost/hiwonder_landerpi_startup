@@ -55,7 +55,7 @@ class ArmScannerConfig:
             self.scan_pose = {
                 2: 785,   # Shoulder: home position (camera horizontal)
                 3: 0,     # Elbow: home position
-                4: 257,   # Wrist: home position (camera straight)
+                4: 350,   # Wrist: camera looking horizontal
                 5: 501,   # Rotate: level
             }
         if self.home_pose is None:
@@ -63,7 +63,7 @@ class ArmScannerConfig:
                 1: 550,   # Base: center
                 2: 785,   # Shoulder: home
                 3: 0,     # Elbow: home
-                4: 257,   # Wrist: home
+                4: 350,   # Wrist: camera horizontal
                 5: 501,   # Rotate: home
             }
 

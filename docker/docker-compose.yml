@@ -19,6 +19,7 @@ services:
       - ../ros2_nodes/cmd_vel_bridge:/ros2_ws/src/cmd_vel_bridge:ro
       - ../ros2_nodes/arm_controller:/ros2_ws/src/arm_controller:ro
       - ../ros2_nodes/lidar_driver:/ros2_ws/src/lidar_driver:ro
+      - ../ros2_nodes/battery_monitor:/ros2_ws/src/battery_monitor:ro
       # Vendor drivers (read-only) - never modified
       - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller:/ros2_ws/src/ros_robot_controller:ro
       - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller_msgs:/ros2_ws/src/ros_robot_controller_msgs:ro
@@ -45,7 +46,7 @@ services:
         pip3 install -q pyserial 2>/dev/null || true
 
         echo '=== Building ROS2 packages ==='
-        colcon build --symlink-install --packages-select ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge arm_controller lidar_driver
+        colcon build --symlink-install --packages-select ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge arm_controller lidar_driver battery_monitor
 
         source install/setup.bash
 

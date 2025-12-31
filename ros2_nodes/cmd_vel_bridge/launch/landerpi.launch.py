@@ -6,6 +6,7 @@ Launches all LanderPi nodes:
 - cmd_vel_bridge - Twist to motor commands
 - arm_controller - Arm servo control
 - lidar_driver - LD19/MS200 lidar
+- battery_monitor - Battery voltage monitoring
 - camera_driver - Aurora 930 (if workspace available)
 """
 
@@ -30,6 +31,12 @@ def generate_launch_description():
         'enable_arm',
         default_value='true',
         description='Enable arm controller'
+    )
+
+    enable_battery_arg = DeclareLaunchArgument(
+        'enable_battery',
+        default_value='true',
+        description='Enable battery monitor'
     )
 
     # Auto-detect camera driver availability
@@ -93,6 +100,20 @@ def generate_launch_description():
         }],
     )
 
+    # battery_monitor node
+    battery_monitor_node = Node(
+        package='battery_monitor',
+        executable='battery_monitor_node',
+        name='battery_monitor',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('enable_battery')),
+        parameters=[{
+            'publish_rate': 1.0,
+            'low_voltage_warning': 7.0,
+            'critical_voltage': 6.6,
+        }],
+    )
+
     # Camera driver (Aurora 930) - include vendor launch file
     camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(camera_launch_path),
@@ -103,6 +124,7 @@ def generate_launch_description():
         # Arguments
         enable_lidar_arg,
         enable_arm_arg,
+        enable_battery_arg,
         enable_camera_arg,
 
         # Log startup
@@ -113,6 +135,7 @@ def generate_launch_description():
         cmd_vel_bridge_node,
         arm_controller_node,
         lidar_driver_node,
+        battery_monitor_node,
         camera_launch,
 
         LogInfo(msg='LanderPi ROS2 stack launched'),

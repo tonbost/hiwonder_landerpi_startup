@@ -40,16 +40,20 @@ class ExplorationConfig:
 
     # Timing
     loop_rate_hz: float = 10.0
-    decision_rate_hz: float = 4.0  # How often to make navigation decisions (faster response)
+    decision_rate_hz: float = 2.0  # Slower decisions to match sensor update rate
 
     # Stuck detection (legacy, now handled by escape handler)
-    stuck_timeout: float = 10.0  # seconds without movement = stuck
+    stuck_timeout: float = 20.0  # seconds without movement = stuck (increased for slow sensor reads)
     stuck_escape_duration: float = 2.0  # seconds to back up when stuck
 
     # Oscillation detection
     turn_history_window: float = 10.0  # seconds to track turn history
     oscillation_threshold: int = 3  # alternating turns to trigger escape
     blocked_count_threshold: int = 3  # forward blocks to trigger escape
+
+    # Carpet/friction compensation - mecanum wheels slip on carpet
+    # Default 2.5x multiplier based on observed 90° command → ~30° actual rotation
+    turn_time_multiplier: float = 2.5
 
 
 class ExplorationController:
@@ -247,6 +251,9 @@ class ExplorationController:
             # Record turn direction for oscillation detection
             direction = "left" if target_angle > 0 else "right"
             self._record_turn(direction)
+
+            # DON'T mark as visited yet - we'll mark it when we actually move forward
+            # This keeps the same target direction until we're facing it
         else:
             # Move forward - reset blocked count since we're making progress
             self.move(speed, 0, 0)
@@ -254,8 +261,8 @@ class ExplorationController:
             self.last_significant_movement = time.time()
             self.forward_blocked_count = 0  # Reset on successful forward movement
 
-        # Mark current direction as visited
-        self.planner.mark_visited(0)  # Front is always where we're looking
+            # Mark front as visited when actually moving forward
+            self.planner.mark_visited(0)
 
         # Log
         self.logger.log_odometry(speed if abs(target_angle) <= 30 else 0, 0, 0)
@@ -370,11 +377,12 @@ class ExplorationController:
 
     def _execute_turn(self, angle_degrees: float) -> None:
         """Execute a turn by the specified angle."""
-        console.print(f"[dim]Executing turn: {angle_degrees}°[/dim]")
-
         # Calculate turn duration based on angle and speed
+        # Apply carpet friction multiplier to compensate for mecanum wheel slip
         angle_rad = abs(math.radians(angle_degrees))
-        duration = angle_rad / self.config.turn_speed
+        duration = (angle_rad / self.config.turn_speed) * self.config.turn_time_multiplier
+
+        console.print(f"[dim]Executing turn: {angle_degrees}° ({duration:.1f}s, multiplier={self.config.turn_time_multiplier})[/dim]")
 
         # Turn direction
         wz = self.config.turn_speed if angle_degrees > 0 else -self.config.turn_speed
@@ -395,9 +403,13 @@ class ExplorationController:
         best_distance = 0
 
         # Rotate slowly, sampling lidar
+        # Apply carpet friction multiplier to compensate for mecanum wheel slip
         rotation_speed = 0.8  # rad/s
         sample_interval = 0.5  # seconds
-        total_duration = 8.0  # ~360° at 0.8 rad/s
+        # Base duration ~8s for 360° at 0.8 rad/s, but carpet needs multiplier
+        total_duration = (2 * math.pi / rotation_speed) * self.config.turn_time_multiplier
+
+        console.print(f"[dim]360° scan duration: {total_duration:.1f}s (multiplier={self.config.turn_time_multiplier})[/dim]")
 
         start_time = time.time()
         angle_traveled = 0

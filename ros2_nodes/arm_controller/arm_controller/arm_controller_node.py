@@ -39,7 +39,7 @@ class ArmController(Node):
         1: 550,   # Base
         2: 785,   # Shoulder
         3: 0,     # Elbow (reads negative, clamped to 0)
-        4: 257,   # Wrist
+        4: 350,   # Wrist (horizontal camera position)
         5: 501,   # Rotate
         10: 497,  # Gripper
     }

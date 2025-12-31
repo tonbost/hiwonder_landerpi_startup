@@ -124,6 +124,9 @@ class FrontierPlanner:
         """
         Get the best direction to explore.
 
+        STRONGLY prefers Front (sector 0) - go straight unless blocked.
+        Only turns if Front is blocked.
+
         Returns:
             Tuple of (best_sector, reason)
             If no valid direction, returns (None, reason)
@@ -136,12 +139,27 @@ class FrontierPlanner:
         if not open_sectors:
             return None, "All sectors blocked"
 
-        # Sort by freshness (lowest = least recently visited)
-        open_sectors.sort(key=lambda s: s.freshness)
+        # ALWAYS prefer Front if it's open (regardless of freshness)
+        front_sector = self.sectors[0]
+        if not front_sector.is_blocked:
+            return front_sector, "Going forward (Front open)"
+
+        # Front is blocked - pick best alternative from forward-ish sectors
+        # Front-Left (7) and Front-Right (1) require minimal turning
+        forward_alts = [s for s in open_sectors if s.index in [1, 7]]
+        if forward_alts:
+            # Pick the one with more space (larger min_distance)
+            forward_alts.sort(key=lambda s: s.min_distance, reverse=True)
+            best = forward_alts[0]
+            sector_name = self.SECTOR_NAMES[best.index]
+            return best, f"Turning to {sector_name} (Front blocked)"
+
+        # No forward sectors available, use any open sector (prefer more space)
+        open_sectors.sort(key=lambda s: s.min_distance, reverse=True)
         best = open_sectors[0]
 
         sector_name = self.SECTOR_NAMES[best.index] if best.index < len(self.SECTOR_NAMES) else f"Sector {best.index}"
-        return best, f"Exploring {sector_name} (freshness: {best.freshness:.1f})"
+        return best, f"Turning to {sector_name} (seeking open space)"
 
     def get_escape_direction(self) -> Optional[Sector]:
         """Get any open direction for escape when stuck."""

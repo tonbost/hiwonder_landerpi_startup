@@ -4,7 +4,7 @@ ROS2 driver for LD19/MS200 lidar.
 
 Publishes to: /scan (sensor_msgs/LaserScan)
 
-Reads serial data from /dev/ttyUSB0 or /dev/ttyUSB1 at 230400 baud.
+Reads serial data from /dev/ttyUSB0, /dev/ttyUSB1, or /dev/ttyUSB2 at 230400 baud.
 Accumulates 360 degrees of scan data before publishing.
 """
 
@@ -36,11 +36,13 @@ class LD19Driver(Node):
         # Declare parameters
         self.declare_parameter('port', '/dev/ttyUSB0')
         self.declare_parameter('port_fallback', '/dev/ttyUSB1')
+        self.declare_parameter('port_fallback2', '/dev/ttyUSB2')
         self.declare_parameter('baudrate', 230400)
         self.declare_parameter('frame_id', 'laser_frame')
 
         port = self.get_parameter('port').value
         port_fallback = self.get_parameter('port_fallback').value
+        port_fallback2 = self.get_parameter('port_fallback2').value
         self.baudrate = self.get_parameter('baudrate').value
         self.frame_id = self.get_parameter('frame_id').value
 
@@ -58,11 +60,18 @@ class LD19Driver(Node):
             return
 
         self.serial = None
-        for p in [port, port_fallback]:
+        for p in [port, port_fallback, port_fallback2]:
             try:
-                self.serial = serial.Serial(p, self.baudrate, timeout=1)
-                self.get_logger().info(f'Opened {p} at {self.baudrate} baud')
-                break
+                test_serial = serial.Serial(p, self.baudrate, timeout=0.5)
+                # Read some data and check for LD19 header (0x54 0x2C)
+                test_data = test_serial.read(100)
+                if test_data and b'\x54\x2c' in test_data:
+                    self.serial = test_serial
+                    self.get_logger().info(f'Opened {p} at {self.baudrate} baud (LD19 data detected)')
+                    break
+                else:
+                    test_serial.close()
+                    self.get_logger().warn(f'{p}: no LD19 data detected, trying next port')
             except Exception as e:
                 self.get_logger().warn(f'Failed to open {p}: {e}')
 

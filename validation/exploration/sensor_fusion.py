@@ -92,6 +92,22 @@ class SensorFusion:
 
         return self.state.depth_distance
 
+    def update_depth_stats(self, min_depth: float) -> float:
+        """
+        Update from pre-processed depth stats.
+
+        Args:
+            min_depth: Minimum depth in meters (already processed)
+
+        Returns:
+            The depth distance in meters
+        """
+        if min_depth > 0:
+            self.state.depth_distance = min_depth
+        else:
+            self.state.depth_distance = float('inf')
+        return self.state.depth_distance
+
     def update_lidar(self, ranges: List[float], angle_min: float, angle_increment: float) -> float:
         """
         Update from lidar scan data.

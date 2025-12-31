@@ -21,7 +21,8 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 | Arm control, gripper, servos | `landerpi-core` → `landerpi-arm` |
 | Lidar scanning, driver only | `landerpi-core` → `landerpi-lidar` |
 | Lidar autonomous modes | `landerpi-core` → `landerpi-motion` → `landerpi-lidar` |
-| Autonomous exploration | `landerpi-core` → `landerpi-motion` → `landerpi-lidar` |
+| Autonomous exploration (on-robot) | `landerpi-core` (uses deploy_explorer.py) |
+| Autonomous exploration (legacy) | `landerpi-core` → `landerpi-motion` → `landerpi-lidar` |
 | Depth camera, RGB/depth/point cloud | `landerpi-core` → `landerpi-camera` |
 | Pick and place operations | `landerpi-core` → `landerpi-motion` → `landerpi-arm` |
 | Vision-guided manipulation | `landerpi-core` → `landerpi-camera` → `landerpi-arm` |
@@ -49,12 +50,12 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
    - Action groups for predefined movements
    - Pulse/angle conversion
 
-4. **landerpi-lidar** (requires core; modes/exploration require motion)
+4. **landerpi-lidar** (requires core; modes require motion)
    - LD19/MS200 protocol details
    - Driver management
    - Scan data reading
    - Autonomous modes (obstacle avoidance, tracking, guard)
-   - Autonomous exploration (frontier-based; depth camera planned)
+   - Autonomous exploration (on-robot recommended, legacy SSH mode available)
 
 5. **landerpi-camera** (requires core)
    - Aurora 930 depth camera setup
@@ -69,11 +70,27 @@ You are a specialized agent for HiWonder LanderPi robot programming and operatio
 2. **Motion Control** - Direct serial control via SDK, ROS2 control via Docker
 3. **Arm Control** - 5-DOF arm servo positioning, gripper operations, kinematics
 4. **Lidar Operations** - Driver management, scan data, autonomous modes
-5. **Autonomous Exploration** - Frontier-based exploration with sensor fusion
+5. **Autonomous Exploration** - On-robot exploration with oscillation detection & progressive escape
 6. **Depth Camera** - Aurora 930 streaming, RGB/depth/point cloud data
 7. **Voice Control** - TARS voice assistant deployment, testing, service management
 8. **Deployment** - Setup scripts, Docker image management, SDK deployment
 9. **Troubleshooting** - Diagnose and resolve robot issues
+
+## Critical: Corner/Wall Oscillation Pattern
+
+**Problem:** In corner situations, robot may oscillate between Front-Left and Front-Right turns without making progress.
+
+**Root Cause:** When both sides have similar clearance (~0.35m), small 45° turns just undo each other.
+
+**Solution (implemented in robot_explorer.py):**
+1. **Turn History Tracking** - Records each turn direction with timestamp
+2. **Oscillation Detection** - Detects 3+ alternating turns (left-right-left)
+3. **Progressive Escape Levels:**
+   - Level 1: 90° wide turn (instead of small 45° turns)
+   - Level 2: 180° turn (reverse direction completely)
+   - Level 3: 360° scan with lidar to find best opening
+
+**Key Insight:** Small 45° turns in corners are insufficient. Use bigger 90°+ turns when escaping.
 
 ## Testing Modes
 
@@ -217,11 +234,18 @@ uv run python validation/test_lidar.py test --mode 1 --duration 10 --yes  # Obst
 uv run python validation/test_lidar.py test --mode 2 --duration 10 --yes  # Tracking
 uv run python validation/test_lidar.py test --mode 3 --duration 10 --yes  # Guard
 
-# Autonomous exploration (load: core + motion + lidar) - ROBOT WILL MOVE!
+# Autonomous exploration - ON-ROBOT (load: core + motion + lidar) - ROBOT WILL MOVE!
+uv run python deploy_explorer.py deploy              # Upload script to robot (one time)
+uv run python deploy_explorer.py start --duration 10 # Start exploration (streams output)
+uv run python deploy_explorer.py start --rosbag --duration 10  # With ROS2 bag recording
+uv run python deploy_explorer.py stop                # Emergency stop
+uv run python deploy_explorer.py status              # Check robot status
+uv run python deploy_explorer.py logs -f             # Follow logs in real-time
+
+# Autonomous exploration - REMOTE/LEGACY (slower due to SSH overhead) - ROBOT WILL MOVE!
 uv run python validation/test_exploration.py status                    # Check prerequisites
 uv run python validation/test_exploration.py start --yes               # Start (30 min default)
 uv run python validation/test_exploration.py start --duration 5 --yes  # Custom duration
-uv run python validation/test_exploration.py start --rosbag --yes      # With ROS2 bag recording
 uv run python validation/test_exploration.py stop                      # Emergency stop
 
 # Depth camera (load: core + camera)

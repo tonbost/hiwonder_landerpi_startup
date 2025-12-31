@@ -107,11 +107,19 @@ uv run python validation/test_lidar_ros2.py scan --samples 5  # Read scan data
 uv run python validation/test_cameradepth_ros2.py check     # Camera topics
 uv run python validation/test_cameradepth_ros2.py stream    # Read streams
 
-# Autonomous exploration (robot will MOVE! requires ROS2 stack)
+# Autonomous exploration - ON-ROBOT (fast, recommended)
+uv run python deploy_explorer.py deploy                    # Upload explorer to robot (one time)
+uv run python deploy_explorer.py start --duration 10       # Start exploration (streams output)
+uv run python deploy_explorer.py start --duration 5 --speed 0.35  # Custom speed
+uv run python deploy_explorer.py start --rosbag --duration 10     # With ROS2 bag recording
+uv run python deploy_explorer.py stop                      # Stop exploration
+uv run python deploy_explorer.py status                    # Check robot status
+uv run python deploy_explorer.py logs                      # View exploration logs
+uv run python deploy_explorer.py logs -f                   # Follow logs in real-time
+
+# Autonomous exploration - REMOTE (legacy, slower due to SSH overhead)
 uv run python validation/test_exploration.py status                    # Check prerequisites
-uv run python validation/test_exploration.py start --yes               # Start (30 min default)
-uv run python validation/test_exploration.py start --duration 5 --yes  # Custom duration
-uv run python validation/test_exploration.py start --rosbag --yes      # With ROS2 bag recording
+uv run python validation/test_exploration.py start --duration 5 --yes  # Start (slower ~7 samples/5min)
 uv run python validation/test_exploration.py stop                      # Emergency stop
 
 # Voice Control (runs ON the robot, requires WonderEcho Pro + ROS2 stack)

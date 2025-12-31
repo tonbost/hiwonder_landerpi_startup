@@ -200,6 +200,72 @@ Robot geometry parameters in `config/robot_params.yaml`:
 | Serial baud | 1000000 | STM32 communication |
 | Serial port | /dev/ttyACM0 | Motor controller |
 
+## Carpet Friction Compensation
+
+Mecanum wheels have significant slip on carpet. The `turn_time_multiplier` parameter compensates for this.
+
+### Problem: Turn Under-Rotation
+
+**Symptoms:**
+- Robot commanded to turn 90° only turns ~30°
+- Turns are inconsistent on carpet vs hard floors
+- Escape maneuvers fail to clear obstacles
+
+**Root Cause:** Carpet friction causes mecanum wheels to slip, reducing actual rotation. A 90° turn at 1.5 rad/s theoretically takes ~1.05 seconds, but on carpet may only achieve ~30° in that time.
+
+### Solution: Turn Time Multiplier + Overhead
+
+Two parameters compensate for carpet friction and command latency:
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `turn_time_multiplier` | 2.5 | Multiplies base turn time for carpet slip |
+| `turn_overhead_seconds` | 0.5 | Fixed overhead for docker exec latency |
+
+**Formula:** `actual_turn_time = (angle_rad / turn_speed) * turn_time_multiplier + turn_overhead_seconds`
+
+| Surface | Multiplier | Overhead | 90° Turn Duration |
+|---------|------------|----------|-------------------|
+| Hard floor | 1.0 | 0.5 | ~1.5 sec |
+| Low-pile carpet | 2.0 | 0.5 | ~2.6 sec |
+| **Carpet (default)** | **2.5** | **0.5** | **~3.1 sec** |
+| High-pile carpet | 3.0 | 0.5 | ~3.6 sec |
+
+### Usage in Exploration
+
+```bash
+# Default 2.5x multiplier (good for carpet)
+uv run python deploy_explorer.py start --duration 5
+
+# Custom multiplier for different surfaces
+uv run python deploy_explorer.py start --duration 5 --turn-multiplier 3.0  # High-pile carpet
+uv run python deploy_explorer.py start --duration 5 --turn-multiplier 1.0  # Hard floor
+```
+
+### Where Applied
+
+Both multiplier and overhead affect all turn calculations:
+- `_escape_stuck()` - Escape turn durations (multiplier + overhead)
+- `_navigate()` - Minimum turn commitment time (multiplier + overhead)
+- `_execute_turn()` - All angle-based turns (multiplier + overhead)
+- `_execute_chassis_360_scan()` - Full rotation scans (multiplier only)
+
+### Command Execution Overhead
+
+The `turn_overhead_seconds` parameter compensates for docker exec latency:
+
+```
+Timeline without overhead:
+  move() called → [docker exec ~0.5s] → robot starts turning → sleep(turn_time) → stop()
+                                        ^--- actual turn starts here
+
+Timeline with overhead (+0.5s):
+  move() called → [docker exec ~0.5s] → robot starts turning → sleep(turn_time + 0.5s) → stop()
+                                        ^--- extra 0.5s compensates for startup delay
+```
+
+If turns are still short, increase overhead to 0.8 or 1.0 seconds in `ExplorationConfig`.
+
 ## Autonomous Navigation Parameters
 
 When implementing autonomous navigation with sensor feedback loops, use **turn commitment** to prevent oscillation.
@@ -212,16 +278,53 @@ Without commitment, a fast control loop (5-10 Hz) causes:
 3. Robot turns right slightly
 4. Oscillates without making progress
 
-### Solution: Turn Commitment
+**Corner Case (Critical):** In corners where both Front-Left and Front-Right have similar clearance (~0.35m), small 45° turns just oscillate between them indefinitely. The robot never escapes because each turn essentially undoes the previous one.
 
-Once a turn decision is made, commit to it for a minimum duration before re-evaluating.
+### Solution: Turn Commitment + Oscillation Detection
+
+**Turn Commitment:** Once a turn decision is made, commit to it for a minimum duration before re-evaluating.
 
 | Parameter | Recommended | Description |
 |-----------|-------------|-------------|
 | Turn speed | 1.5 rad/s | ~86°/sec - fast enough to complete turns |
 | Min turn duration | 0.8 sec | Minimum time before re-evaluating direction |
-| Turn complete threshold | 20° | Consider turn done when target within this angle |
+| Turn complete threshold | 25° | Consider turn done when target within this angle |
 | Escape turn time | 0.5-3.0 sec | Calculate from angle: `angle_rad / turn_speed` |
+
+**Oscillation Detection:** Track turn history and detect alternating patterns.
+
+```python
+# State
+turn_history: List[tuple] = []  # [(direction, timestamp), ...]
+
+def _record_turn(self, direction: int) -> None:
+    """Record turn for oscillation detection. direction: -1=right, 1=left"""
+    now = time.time()
+    self.turn_history.append((direction, now))
+    # Keep only last 20 seconds
+    cutoff = now - 20.0
+    self.turn_history = [(d, t) for d, t in self.turn_history if t >= cutoff]
+
+def _is_oscillating(self) -> bool:
+    """Detect 3+ alternating turns (left-right-left)."""
+    if len(self.turn_history) < 4:
+        return False
+    recent = [d for d, _ in self.turn_history[-6:]]
+    if len(recent) < 4:
+        return False
+    alternations = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
+    return alternations >= 3  # 3+ alternations = oscillating
+```
+
+**Progressive Escape:** When oscillation detected, escalate to bigger turns:
+
+| Level | Turn Angle | Purpose |
+|-------|------------|---------|
+| 1 | 90° | Wide turn - usually sufficient |
+| 2 | 180° | Full reversal - for tight corners |
+| 3 | 360° scan | Find best opening with lidar sampling |
+
+**Key Insight:** Small 45° turns are useless in corners. Use 90°+ turns when escaping.
 
 ### Implementation Pattern
 
@@ -259,12 +362,41 @@ def navigate():
 
 ### Escape Maneuver
 
-When stuck, perform a committed escape:
-1. Back up for 2 seconds
+When stuck or oscillating, perform a **progressive** escape:
+
+**Level 1 (Most Common):**
+1. Back up for ~2.2 seconds
 2. Stop and re-scan environment
-3. Calculate turn time: `turn_time = abs(target_angle_rad) / turn_speed`
-4. Execute full turn without interruption
-5. Resume normal navigation
+3. Turn 90° toward most open side (not the small 45° that caused oscillation)
+4. Resume normal navigation
+
+**Level 2 (If Level 1 fails):**
+1. Back up for ~3 seconds (longer backup)
+2. Turn 180° (complete reversal)
+3. Resume exploration in opposite direction
+
+**Level 3 (If Level 2 fails):**
+1. Back up for ~3.5 seconds
+2. Execute 360° chassis rotation while sampling lidar
+3. Track best front distance during rotation
+4. Turn back to face best opening found
+5. Clear escape state and resume
+
+**Turn Time Calculation:**
+```
+turn_time = (angle_rad / turn_speed) * turn_time_multiplier + turn_overhead_seconds
+```
+
+Example for 90° on carpet (mult=2.5, overhead=0.5):
+```
+turn_time = (1.57 / 1.5) * 2.5 + 0.5 = 2.62 + 0.5 = 3.12 seconds
+```
+
+**State Clearing:** After successful forward movement, reset:
+- `escape_level = 0`
+- `turn_history.clear()`
+
+This gives the robot a "fresh start" after escaping a stuck situation.
 
 ## Troubleshooting
 

@@ -1,8 +1,30 @@
 # Progressive Escape Design for Exploration
 
 **Date:** 2025-12-30
-**Status:** Approved
+**Status:** Implemented
 **Problem:** Robot gets stuck oscillating back-and-forth during exploration, not turning enough to find escape routes
+
+## Architecture Update (2025-12-30)
+
+**Original issue:** SSH-based sensor reads were too slow (~0.1Hz, 8-10 seconds per read) due to:
+- Mac → SSH → Pi → Docker → ROS2 → response chain
+- Network latency and command overhead
+
+**Solution:** On-robot architecture where exploration runs directly on Raspberry Pi:
+- `robot_explorer.py` - Self-contained exploration script running on Pi
+- `deploy_explorer.py` - Deployment and control from Mac
+- Uses local `docker exec` for fast sensor reads (~8Hz)
+
+**Commands:**
+```bash
+# On-robot approach (recommended)
+uv run python deploy_explorer.py deploy              # Upload to robot (one time)
+uv run python deploy_explorer.py start --duration 10 # Start (streams output)
+uv run python deploy_explorer.py stop                # Emergency stop
+
+# Legacy SSH approach (slower)
+uv run python validation/test_exploration.py start --yes
+```
 
 ## Problem Analysis
 
@@ -395,3 +417,48 @@ Normal Exploration
    - Dead-end corridor (Level 2 needed)
    - Surrounded by obstacles (Level 3 needed)
    - Confirm arm sweep works with depth camera
+
+## Implementation Status
+
+### Completed
+
+1. **Progressive escape system** (`validation/exploration/escape_handler.py`)
+   - 3-level escalation: Wide Turn → Reverse 180 → Full Scan → Trapped
+   - Cooldown between escapes to prevent thrashing
+
+2. **Oscillation detection** (in `explorer.py`)
+   - Turn history tracking with 10-second window
+   - Triggers on 3+ alternating turns OR 3+ blocked attempts
+
+3. **Arm scanner integration** (`validation/exploration/arm_scanner.py`)
+   - Servo 1 pan control for camera scanning
+   - Quick glance and full sweep modes
+   - Scan pose verified for horizontal camera orientation
+
+4. **Parameter tuning**
+   - Forward speed: 0.35 m/s (was 0.2 m/s)
+   - Decision rate: 4 Hz (was 2 Hz)
+   - Stop distance: 0.15 m (was 0.20 m)
+   - Slow distance: 0.30 m (was 0.50 m)
+   - Blocked distance: 0.40 m (was 0.80 m)
+
+5. **On-robot architecture** (replaces SSH-based approach)
+   - `robot_explorer.py` runs on Pi for 8Hz sensor reads
+   - `deploy_explorer.py` for deployment and control
+   - Local `docker exec` instead of SSH for sensor access
+
+### Files Created/Modified
+
+**New files:**
+- `validation/exploration/escape_handler.py` - Progressive escape state machine
+- `validation/exploration/arm_scanner.py` - Arm-mounted camera scanning
+- `robot_explorer.py` - On-robot exploration script
+- `deploy_explorer.py` - Deployment and control tool
+
+**Modified files:**
+- `validation/exploration/explorer.py` - Integrated escape handler, oscillation detection
+- `validation/exploration/sensor_fusion.py` - Updated distance thresholds
+- `validation/exploration/frontier_planner.py` - Updated blocked threshold
+- `CLAUDE.md` - Updated exploration commands
+- `.claude/skills/landerpi-lidar/SKILL.md` - Updated with new architecture
+- `.claude/agents/landerpi-robot.md` - Updated skill loading matrix
