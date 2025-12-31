@@ -152,8 +152,8 @@ class RobotExplorer:
             print("  uv run python deploy_ros2_stack.py deploy")
             return
 
-        # Initialize arm to horizontal position for camera
-        self.hardware.init_arm_horizontal()
+        # Initialize arm to explore home (tucked, out of the way)
+        self.hardware.init_arm_explore()
 
         # Start controller
         self.controller.start()

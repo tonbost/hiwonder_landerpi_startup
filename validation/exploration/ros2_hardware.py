@@ -398,22 +398,27 @@ print("OK")
         """
         return self.set_arm_pose([[servo_id, position]], duration)
 
-    def init_arm_horizontal(self) -> bool:
-        """Initialize arm to horizontal camera position.
+    def init_arm_explore(self) -> bool:
+        """Initialize arm to exploring home position (folded back, out of the way).
 
-        Positions verified for camera facing straight ahead horizontally.
-        Servo 4 at 350 keeps camera level.
+        Arm is tucked for safe navigation. Camera extends for scanning when needed.
         """
-        positions = [[1, 550], [2, 785], [3, 0], [4, 350], [5, 501]]
+        # Exploring home: arm folded back, out of the way
+        positions = [[1, 547], [2, 818], [3, 203], [4, 58], [5, 501]]
         duration = 2.0
-        print("Initializing arm to horizontal camera position...")
+        print("Initializing arm to explore home position...")
         ok = self.set_arm_pose(positions, duration)
         if ok:
             time.sleep(duration + 0.5)  # Wait for arm to reach position
-            print("Arm ready")
+            print("Arm ready (tucked)")
         else:
             print("Arm init failed")
         return ok
+
+    # Keep old name as alias for compatibility
+    def init_arm_horizontal(self) -> bool:
+        """Alias for init_arm_explore (legacy name)."""
+        return self.init_arm_explore()
 
     # --- Battery ---
 
