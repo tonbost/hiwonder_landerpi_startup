@@ -114,6 +114,10 @@ class RobotExplorer:
             arm_scanner=self.arm_scanner,
             escape_config=escape_config,
             on_speak=self._speak,
+            # Continuous motion callbacks (watchdog-safe)
+            move_for_duration_func=self.hardware.move_for_duration,
+            start_move_func=self.hardware.start_move,
+            stop_move_func=self.hardware.stop_move,
         )
 
         # Signal handling

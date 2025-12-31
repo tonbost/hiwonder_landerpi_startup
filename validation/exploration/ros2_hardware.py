@@ -57,6 +57,8 @@ class ROS2Hardware:
         self._last_lidar_time: float = 0.0
         self._cached_lidar: Tuple[List[float], float, float] = ([], 0.0, 0.0)
         self._lidar_read_interval: float = 0.5  # Read lidar every 0.5 seconds
+        # Background motion process (for continuous movement)
+        self._motion_process: Optional[subprocess.Popen] = None
 
     def _run_docker(self, cmd: str, timeout: Optional[float] = None) -> Tuple[bool, str]:
         """Run command in Docker container.
@@ -124,7 +126,89 @@ sys.path.insert(0, '{self._sdk_path}')
 
     def stop(self) -> None:
         """Stop all motors."""
+        self.stop_move()  # Stop any background motion first
         self.move(0, 0, 0)
+
+    def move_for_duration(self, vx: float, vy: float, wz: float, duration: float) -> bool:
+        """Send velocity command continuously for a specified duration.
+
+        Uses ros2 topic pub --rate to continuously publish, keeping
+        the watchdog happy (0.5s timeout in cmd_vel_bridge).
+
+        This is a BLOCKING call - it will wait for the duration to complete.
+
+        Args:
+            vx: Linear velocity X (m/s) - forward/backward
+            vy: Linear velocity Y (m/s) - strafe left/right
+            wz: Angular velocity Z (rad/s) - rotation
+            duration: How long to move in seconds
+
+        Returns:
+            True if command executed successfully
+        """
+        # Stop any existing background motion
+        self.stop_move()
+
+        twist = f"'{{linear: {{x: {vx}, y: {vy}, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: {wz}}}}}'"
+        # Use --rate 10 (10 Hz) to publish continuously, with timeout
+        # Rate of 10 Hz means publish every 0.1s, well within 0.5s watchdog
+        # Add small buffer to timeout to ensure full duration
+        cmd = f"timeout {duration + 0.1} ros2 topic pub --rate 10 {self.config.cmd_vel_topic} geometry_msgs/msg/Twist {twist}"
+        ok, _ = self._run_docker(cmd, timeout=duration + 2.0)
+        # Always send stop after to ensure motors halt
+        self.move(0, 0, 0)
+        return ok
+
+    def start_move(self, vx: float, vy: float, wz: float) -> bool:
+        """Start continuous velocity command (non-blocking).
+
+        Uses ros2 topic pub --rate in background. Call stop_move() to stop.
+        This is for cases where you need to move while doing other work
+        (e.g., sampling sensors during a 360 scan).
+
+        Args:
+            vx: Linear velocity X (m/s) - forward/backward
+            vy: Linear velocity Y (m/s) - strafe left/right
+            wz: Angular velocity Z (rad/s) - rotation
+
+        Returns:
+            True if background process started successfully
+        """
+        # Stop any existing background motion first
+        self.stop_move()
+
+        twist = f"'{{linear: {{x: {vx}, y: {vy}, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: {wz}}}}}'"
+        # Use --rate 10 to keep watchdog happy, no timeout (runs until killed)
+        cmd = f"ros2 topic pub --rate 10 {self.config.cmd_vel_topic} geometry_msgs/msg/Twist {twist}"
+        full_cmd = f'{DOCKER_EXEC} "{ROS_SOURCE} {cmd}"'
+
+        try:
+            self._motion_process = subprocess.Popen(
+                full_cmd,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            self._motion_process = None
+            return False
+
+    def stop_move(self) -> None:
+        """Stop background continuous motion started by start_move().
+
+        Safe to call even if no motion is running.
+        """
+        if self._motion_process is not None:
+            try:
+                self._motion_process.terminate()
+                self._motion_process.wait(timeout=1.0)
+            except Exception:
+                try:
+                    self._motion_process.kill()
+                except Exception:
+                    pass
+            self._motion_process = None
 
     # --- Lidar ---
 

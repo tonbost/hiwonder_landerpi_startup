@@ -210,8 +210,41 @@ Mecanum wheels have significant slip on carpet. The `turn_time_multiplier` param
 - Robot commanded to turn 90° only turns ~30°
 - Turns are inconsistent on carpet vs hard floors
 - Escape maneuvers fail to clear obstacles
+- **turn_multiplier has no effect** (e.g., 5x vs 10x gives same result)
 
-**Root Cause:** Carpet friction causes mecanum wheels to slip, reducing actual rotation. A 90° turn at 1.5 rad/s theoretically takes ~1.05 seconds, but on carpet may only achieve ~30° in that time.
+**Root Cause #1 (CRITICAL): cmd_vel Watchdog Timeout**
+
+The `cmd_vel_bridge` ROS2 node has a **0.5 second watchdog**. If using `ros2 topic pub --once`, the robot stops after 0.5s regardless of intended duration!
+
+```
+Old broken pattern:
+  move(wz) → sends ONE --once command → watchdog fires at 0.5s → motors STOP
+  sleep(3.0) → useless, robot already stopped
+  stop() → redundant
+```
+
+**Solution: Continuous Publishing**
+
+Use `ros2 topic pub --rate 10` (10 Hz) to keep the watchdog happy:
+
+```python
+# In ROS2Hardware class:
+def move_for_duration(self, vx, vy, wz, duration):
+    """Blocking move with continuous publishing."""
+    cmd = f"timeout {duration + 0.1} ros2 topic pub --rate 10 /cmd_vel ..."
+    # Publishes every 0.1s, well within 0.5s watchdog
+
+def start_move(self, vx, vy, wz):
+    """Non-blocking continuous move (for sensor sampling during motion)."""
+    # Runs in background until stop_move() called
+
+def stop_move(self):
+    """Stop background motion process."""
+```
+
+**Root Cause #2: Carpet Friction**
+
+Even with continuous publishing, carpet causes mecanum wheels to slip. The `turn_time_multiplier` compensates for this.
 
 ### Solution: Turn Time Multiplier + Overhead
 
@@ -316,13 +349,18 @@ def _is_oscillating(self) -> bool:
     return alternations >= 3  # 3+ alternations = oscillating
 ```
 
-**Progressive Escape:** When oscillation detected, escalate to bigger turns:
+**Progressive Escape:** When blocked or oscillating, escalate through levels:
 
-| Level | Turn Angle | Purpose |
-|-------|------------|---------|
-| 1 | 90° | Wide turn - usually sufficient |
-| 2 | 180° | Full reversal - for tight corners |
-| 3 | 360° scan | Find best opening with lidar sampling |
+| Level | Action | Details |
+|-------|--------|---------|
+| 1 | Backup + 90° turn | Backup 1.5s, arm glance left/right, turn toward open side |
+| 2 | Longer backup + 180° | Backup 2s, complete reversal |
+| 3 | Full 360° scan | Backup, arm sweep (~120°), then 360° chassis rotation with depth camera (8 samples at 45°) |
+| 4 | Trapped | Give up, announce "I'm trapped. Please help me." |
+
+**Escalation Trigger:** Robot blocked again while still in escape mode (not timeout-based).
+
+**Success Condition:** Robot successfully moves forward → escape resets to Level 0.
 
 **Key Insight:** Small 45° turns are useless in corners. Use 90°+ turns when escaping.
 
@@ -362,25 +400,49 @@ def navigate():
 
 ### Escape Maneuver
 
-When stuck or oscillating, perform a **progressive** escape:
+When stuck or oscillating, perform a **progressive** escape with **escalation on repeated failure**:
 
 **Level 1 (Most Common):**
-1. Back up for ~2.2 seconds
-2. Stop and re-scan environment
-3. Turn 90° toward most open side (not the small 45° that caused oscillation)
-4. Resume normal navigation
+1. Back up for 1.5 seconds (critical - allows room to turn)
+2. Arm glance left/right to find more open side
+3. Turn 90° toward most open side
+4. Attempt forward movement
+5. If blocked again → escalate to Level 2
 
 **Level 2 (If Level 1 fails):**
-1. Back up for ~3 seconds (longer backup)
+1. Back up for 2 seconds (longer backup)
 2. Turn 180° (complete reversal)
-3. Resume exploration in opposite direction
+3. Attempt forward movement
+4. If blocked again → escalate to Level 3
 
 **Level 3 (If Level 2 fails):**
-1. Back up for ~3.5 seconds
-2. Execute 360° chassis rotation while sampling lidar
-3. Track best front distance during rotation
-4. Turn back to face best opening found
-5. Clear escape state and resume
+1. Back up for 2 seconds
+2. Arm sweep (~120° range with depth camera)
+3. If no opening found: 360° chassis rotation with depth camera (8 samples at 45° intervals)
+4. Turn to face best opening found
+5. Attempt forward movement
+6. If blocked again → escalate to Level 4 (Trapped)
+
+**Level 4 (Trapped):**
+- Stop all movement
+- Announce "I'm trapped. Please help me."
+- Wait for manual intervention
+
+**Escalation Flow:**
+```
+Blocked 3x → Level 1 (backup + turn 90°)
+  ↓ blocked again while in escape mode
+Level 2 (backup + turn 180°)
+  ↓ blocked again
+Level 3 (backup + 360° camera scan)
+  ↓ blocked again
+Level 4 (Trapped)
+```
+
+**Success at Any Level:**
+```
+Turn executed → Robot moves forward successfully → Reset to Level 0
+```
 
 **Turn Time Calculation:**
 ```
@@ -395,6 +457,7 @@ turn_time = (1.57 / 1.5) * 2.5 + 0.5 = 2.62 + 0.5 = 3.12 seconds
 **State Clearing:** After successful forward movement, reset:
 - `escape_level = 0`
 - `turn_history.clear()`
+- `escape_in_progress = False`
 
 This gives the robot a "fresh start" after escaping a stuck situation.
 
@@ -444,3 +507,27 @@ Test each motor individually and verify physical position matches expected.
 1. Check wheel tightness
 2. Verify floor surface is level
 3. Calibrate motor speeds if needed
+
+### Problem: Turns cut short (90° → ~30°)
+
+**Symptoms:**
+- Robot turns much less than commanded
+- turn_multiplier parameter has no effect (5x vs 10x same result)
+- Robot only turns for ~0.5 seconds regardless of duration
+
+**Root Cause:** The `cmd_vel_bridge` node has a 0.5s watchdog. Using `ros2 topic pub --once` triggers the watchdog, stopping motors after 0.5s.
+
+**Solution:** Use `move_for_duration()` or `start_move()`/`stop_move()` methods in `ROS2Hardware` class. These use `ros2 topic pub --rate 10` for continuous publishing.
+
+**Verification:**
+```bash
+# Check watchdog setting in cmd_vel_bridge
+grep -r "cmd_vel_timeout" ros2_nodes/
+# Should show 0.5 seconds
+```
+
+**Files Updated:**
+- `validation/exploration/ros2_hardware.py` - Added `move_for_duration()`, `start_move()`, `stop_move()`
+- `validation/exploration/explorer.py` - Updated `_execute_turn()`, `_execute_chassis_360_scan()`
+- `validation/exploration/escape_handler.py` - Updated backup/reverse methods
+- `robot_explorer.py` - Passes new callbacks to `ExplorationController`

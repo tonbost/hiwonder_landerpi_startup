@@ -1,8 +1,9 @@
 """Arm-mounted depth camera scanner for escape direction finding."""
 
+import math
 import time
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from rich.console import Console
 
@@ -286,3 +287,129 @@ class ArmScanner:
                 "min_clearance": self.config.min_clearance,
             }
         }
+
+    def chassis_360_scan(
+        self,
+        chassis_move_func: Callable[[float, float, float], bool],
+        chassis_stop_func: Callable[[], None],
+        turn_speed: float = 0.8,
+        turn_time_multiplier: float = 2.5,
+        num_samples: int = 8,
+    ) -> Dict[float, DepthReading]:
+        """
+        Perform a 360° scan using chassis rotation + depth camera.
+
+        The arm stays in scan pose (camera horizontal) while the chassis rotates,
+        sampling depth at evenly spaced angles.
+
+        Args:
+            chassis_move_func: Function to move chassis (vx, vy, wz) -> success
+            chassis_stop_func: Function to stop chassis
+            turn_speed: Rotation speed in rad/s
+            turn_time_multiplier: Carpet friction compensation multiplier
+            num_samples: Number of samples (8 = every 45°)
+
+        Returns:
+            Dict mapping angle (degrees) to DepthReading at that angle.
+            Angles are 0=front, 45=front-left, 90=left, etc.
+        """
+        readings: Dict[float, DepthReading] = {}
+
+        # Calculate timing
+        angle_per_sample = 360.0 / num_samples  # degrees
+        angle_per_sample_rad = math.radians(angle_per_sample)
+        # Time to rotate one sample's worth of angle, with carpet compensation
+        time_per_sample = (angle_per_sample_rad / turn_speed) * turn_time_multiplier
+        total_duration = time_per_sample * num_samples
+
+        console.print(f"[dim]360° chassis scan: {num_samples} samples, {total_duration:.1f}s total[/dim]")
+
+        try:
+            # Ensure arm is in scan pose (camera horizontal)
+            if not self._in_scan_pose:
+                self.enter_scan_pose()
+
+            # Center the arm (servo 1) so camera faces forward relative to chassis
+            self.arm_move(1, self.config.servo_center, self.config.move_duration)
+            time.sleep(self.config.settle_time)
+
+            # Sample at starting position (0°) before rotating
+            depth_data = self.get_depth()
+            if depth_data:
+                readings[0.0] = DepthReading(
+                    angle=0.0,
+                    min_depth=depth_data.get("min_depth", 0),
+                    avg_depth=depth_data.get("avg_depth", 0),
+                    valid_percent=depth_data.get("valid_percent", 0),
+                )
+                console.print(f"[dim]  0°: avg={readings[0.0].avg_depth:.2f}m[/dim]")
+
+            # Rotate and sample at each position
+            for i in range(1, num_samples):
+                # Rotate one step (positive = counter-clockwise = left)
+                chassis_move_func(0, 0, turn_speed)
+                time.sleep(time_per_sample)
+                chassis_stop_func()
+                time.sleep(0.3)  # Brief settle
+
+                # Calculate current angle (cumulative)
+                angle = angle_per_sample * i
+
+                # Sample depth
+                depth_data = self.get_depth()
+                if depth_data:
+                    readings[angle] = DepthReading(
+                        angle=angle,
+                        min_depth=depth_data.get("min_depth", 0),
+                        avg_depth=depth_data.get("avg_depth", 0),
+                        valid_percent=depth_data.get("valid_percent", 0),
+                    )
+                    console.print(f"[dim]  {angle:.0f}°: avg={readings[angle].avg_depth:.2f}m[/dim]")
+                else:
+                    console.print(f"[dim]  {angle:.0f}°: no data[/dim]")
+
+        except Exception as e:
+            console.print(f"[red]Chassis 360° scan failed: {e}[/red]")
+            chassis_stop_func()
+
+        return readings
+
+    def find_best_360_opening(
+        self,
+        readings: Dict[float, DepthReading],
+        min_clearance: float = None,
+    ) -> Optional[float]:
+        """
+        Find the best escape direction from a 360° scan.
+
+        Args:
+            readings: Dict from chassis_360_scan()
+            min_clearance: Minimum depth to consider "open" (default: config value)
+
+        Returns:
+            Angle in degrees to turn toward, or None if no good opening found.
+            Angle is relative to starting position (0=front at scan start).
+        """
+        if not readings:
+            return None
+
+        min_clearance = min_clearance or self.config.min_clearance
+
+        # Filter to readings with sufficient clearance
+        valid_readings = [
+            r for r in readings.values()
+            if r.avg_depth >= min_clearance and r.valid_percent > 30
+        ]
+
+        if not valid_readings:
+            console.print(f"[dim]No openings with ≥{min_clearance}m clearance[/dim]")
+            return None
+
+        # Find the one with greatest average depth
+        best = max(valid_readings, key=lambda r: r.avg_depth)
+
+        console.print(
+            f"[green]Best 360° opening: {best.angle:.0f}° with {best.avg_depth:.2f}m clearance[/green]"
+        )
+
+        return best.angle

@@ -26,6 +26,13 @@ class SensorConfig:
     # Lidar settings
     lidar_front_angle: float = 60.0  # degrees each side of center
 
+    # Fusion - LIDAR PRIORITY
+    # Lidar is at wheel height and more reliable for navigation
+    # Camera is higher and may see over obstacles (like stairs)
+    # Camera can only LOWER the distance (for safety), not increase it
+    lidar_priority: bool = True  # Use lidar as primary sensor
+    camera_safety_ratio: float = 0.7  # Camera distance must be < lidar * this ratio to override
+
     # Fusion
     update_rate_hz: float = 10.0
 
@@ -161,13 +168,31 @@ class SensorFusion:
         """
         Get fused obstacle state.
 
-        Uses minimum of depth and lidar distances.
+        LIDAR PRIORITY: Lidar is the primary sensor for navigation decisions.
+        Camera can only LOWER the distance (for safety - detecting low obstacles
+        that lidar might miss), but cannot INCREASE it (since camera is at a
+        different height and may see over obstacles like stairs).
         """
-        # Fuse: take minimum of both sensors
-        self.state.closest_distance = min(
-            self.state.depth_distance,
-            self.state.lidar_distance
-        )
+        if self.config.lidar_priority:
+            # PRIMARY: Use lidar distance as baseline
+            self.state.closest_distance = self.state.lidar_distance
+
+            # SECONDARY: Camera can only LOWER the distance (safety override)
+            # Only use camera if it sees something significantly closer than lidar
+            # This catches low obstacles the lidar might miss
+            if (
+                self.state.depth_distance < float('inf') and
+                self.state.depth_distance < self.state.lidar_distance * self.config.camera_safety_ratio
+            ):
+                # Camera sees something much closer - likely a low obstacle
+                # Use camera distance for safety
+                self.state.closest_distance = self.state.depth_distance
+        else:
+            # Legacy behavior: take minimum of both sensors
+            self.state.closest_distance = min(
+                self.state.depth_distance,
+                self.state.lidar_distance
+            )
 
         # Determine action
         self.state.should_stop = self.state.closest_distance < self.config.stop_distance

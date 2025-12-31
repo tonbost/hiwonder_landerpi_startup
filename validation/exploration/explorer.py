@@ -79,6 +79,10 @@ class ExplorationController:
         # New: arm scanner for escape
         arm_scanner: Optional[ArmScanner] = None,
         escape_config: Optional[EscapeConfig] = None,
+        # Continuous motion callbacks (for watchdog-safe movement)
+        move_for_duration_func: Optional[Callable[[float, float, float, float], bool]] = None,
+        start_move_func: Optional[Callable[[float, float, float], bool]] = None,
+        stop_move_func: Optional[Callable[[], None]] = None,
     ):
         self.config = exploration_config or ExplorationConfig()
 
@@ -86,6 +90,10 @@ class ExplorationController:
         self.move = move_func
         self.stop = stop_func
         self.speak = on_speak or (lambda msg: console.print(f"[cyan]{msg}[/cyan]"))
+        # Continuous motion for watchdog-safe movement (turns, backup)
+        self.move_for_duration = move_for_duration_func
+        self.start_move = start_move_func
+        self.stop_move = stop_move_func or stop_func
 
         # Components
         self.safety = SafetyMonitor(
@@ -107,6 +115,7 @@ class ExplorationController:
             arm_scanner=arm_scanner,
             config=escape_config,
             on_speak=self.speak,
+            move_for_duration_func=move_for_duration_func,
         )
 
         # State
@@ -192,16 +201,19 @@ class ExplorationController:
             self.logger.log_event("obstacle_stop", {"distance": obstacle.closest_distance})
             console.print(f"[red]Obstacle at {obstacle.closest_distance:.2f}m - stopped (blocked: {self.forward_blocked_count})[/red]")
 
-            # Check if we should trigger escape
-            if self._should_escape():
+            # Check if we're already in escape mode
+            if self.escape_handler.escape_in_progress:
+                # Already escaping but hit obstacle again → ESCALATE
+                console.print("[yellow]Blocked again while escaping - escalating[/yellow]")
+                self._handle_escape_escalation()
+            elif self._should_escape():
+                # Not in escape mode, trigger new escape
                 self._handle_escape()
             return True  # Continue loop but don't move
 
-        # Check for escape in progress
-        if self.escape_handler.escape_in_progress:
-            if self.escape_handler.should_escalate():
-                self._handle_escape_escalation()
-            return True
+        # If in escape mode but NOT blocked, continue to navigation
+        # to test if the escape worked (robot can move forward)
+        # Don't return early here - let navigation decision happen
 
         # Check for oscillation-triggered escape (even if not currently blocked)
         if self._is_oscillating() and not self.escape_handler.in_cooldown():
@@ -260,6 +272,12 @@ class ExplorationController:
             self.current_action = "moving forward"
             self.last_significant_movement = time.time()
             self.forward_blocked_count = 0  # Reset on successful forward movement
+
+            # If we were in escape mode, the escape worked! Reset.
+            if self.escape_handler.escape_in_progress:
+                console.print("[green]Escape successful - moving forward[/green]")
+                self.escape_handler.reset()
+                self._clear_escape_state()
 
             # Mark front as visited when actually moving forward
             self.planner.mark_visited(0)
@@ -367,10 +385,13 @@ class ExplorationController:
             # Execute the turn
             self._execute_turn(result.direction)
 
-            # Check if escape was successful (did we find a way out?)
-            # For now, assume success and reset
-            self.escape_handler.reset()
-            self._clear_escape_state()
+            # DON'T reset here - wait to see if escape actually worked
+            # Reset will happen in _make_navigation_decision() when robot
+            # successfully moves forward, or escalation will happen if
+            # robot hits obstacle again
+            # Reset the level timer to give this turn a chance to work
+            self.escape_handler.level_start_time = time.time()
+
         elif not result.success and result.level == EscapeLevel.FULL_SCAN:
             # Need chassis rotation - do it here with lidar
             self._execute_chassis_360_scan()
@@ -387,9 +408,14 @@ class ExplorationController:
         # Turn direction
         wz = self.config.turn_speed if angle_degrees > 0 else -self.config.turn_speed
 
-        self.move(0, 0, wz)
-        time.sleep(duration)
-        self.stop()
+        # Use continuous motion if available (watchdog-safe)
+        if self.move_for_duration:
+            self.move_for_duration(0, 0, wz, duration)
+        else:
+            # Fallback to old behavior (may be cut short by watchdog)
+            self.move(0, 0, wz)
+            time.sleep(duration)
+            self.stop()
 
         self.current_action = f"turned {angle_degrees:.0f}°"
         self.last_significant_movement = time.time()
@@ -414,7 +440,11 @@ class ExplorationController:
         start_time = time.time()
         angle_traveled = 0
 
-        self.move(0, 0, rotation_speed)
+        # Use continuous motion if available (watchdog-safe)
+        if self.start_move:
+            self.start_move(0, 0, rotation_speed)
+        else:
+            self.move(0, 0, rotation_speed)
 
         while (time.time() - start_time) < total_duration:
             time.sleep(sample_interval)
@@ -428,7 +458,8 @@ class ExplorationController:
                 best_angle = math.degrees(angle_traveled)
                 console.print(f"[dim]Found opening at {best_angle:.0f}°: {best_distance:.2f}m[/dim]")
 
-        self.stop()
+        # Stop continuous motion
+        self.stop_move()
 
         if best_angle is not None and best_distance > 0.8:
             console.print(f"[green]Best opening at {best_angle:.0f}° with {best_distance:.2f}m[/green]")
