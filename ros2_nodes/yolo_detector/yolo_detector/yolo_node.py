@@ -33,9 +33,10 @@ class YoloDetectorNode(Node):
         self.get_logger().info('Model loaded successfully.')
         
         # ROS Communications
+        # Subscribe to Aurora 930 camera RGB image
         self.subscription = self.create_subscription(
             Image,
-            '/aurora/rgb/image_color',
+            '/aurora/rgb/image_raw',
             self.image_callback,
             10)
         
