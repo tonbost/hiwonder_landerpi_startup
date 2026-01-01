@@ -28,6 +28,7 @@ class ROS2Config:
     arm_cmd_topic: str = "/arm/cmd"
     arm_state_topic: str = "/arm/state"
     battery_topic: str = "/battery"
+    hazards_topic: str = "/hazards"
 
     # Timeouts (seconds)
     cmd_timeout: float = 5.0
@@ -359,6 +360,29 @@ sys.path.insert(0, '{self._sdk_path}')
             pass
 
         return self._cached_depth
+
+    # --- Hazards ---
+
+    def read_hazards(self) -> List[dict]:
+        """Read semantic hazards from /hazards topic.
+
+        Returns:
+            List of hazard dicts: [{"type": "person", "distance": 1.0, ...}, ...]
+        """
+        # Read from /hazards topic (String msg with JSON)
+        cmd = f"timeout 1 ros2 topic echo --once --field data {self.config.hazards_topic} 2>/dev/null"
+        ok, output = self._run_docker(cmd, timeout=1.5)
+
+        if ok and output:
+            try:
+                # Output might be quoted or have newlines
+                json_str = output.strip().strip("'").strip('"')
+                data = json.loads(json_str)
+                return data.get("hazards", [])
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        
+        return []
 
     # --- Arm Control ---
 

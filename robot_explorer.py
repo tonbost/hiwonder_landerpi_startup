@@ -59,9 +59,11 @@ class RobotExplorer:
         forward_speed: float = 0.35,
         turn_time_multiplier: float = 2.5,
         enable_rosbag: bool = False,
+        enable_yolo: bool = False,
     ):
         self.duration = duration_minutes
         self.enable_rosbag = enable_rosbag
+        self.enable_yolo = enable_yolo
 
         # Create ROS2 hardware interface
         self.hardware = ROS2Hardware()
@@ -173,14 +175,22 @@ class RobotExplorer:
             # Read sensors
             ranges, angle_min, angle_inc = self.hardware.read_lidar()
             depth_data = self.hardware.read_depth()
+            
+            # Read hazards if YOLO enabled
+            hazards = []
+            if self.enable_yolo:
+                hazards = self.hardware.read_hazards()
+
 
             # Update controller with sensor data
             if ranges:
                 # Update lidar data
                 self.controller.update_sensors(
                     ranges, angle_min, angle_inc,
-                    None, 0, 0  # Raw depth not used
+                    None, 0, 0,  # Raw depth not used
+                    hazards=hazards
                 )
+
 
                 # Update depth stats separately if available
                 if depth_data and "min_depth" in depth_data:
@@ -221,8 +231,10 @@ def cmd_explore(args):
         forward_speed=args.speed,
         turn_time_multiplier=args.turn_multiplier,
         enable_rosbag=args.rosbag,
+        enable_yolo=args.yolo,
     )
     explorer.start()
+
 
 
 def cmd_stop(args):
@@ -280,7 +292,9 @@ def main():
     explore_parser.add_argument("--turn-multiplier", type=float, default=2.5,
                                 help="Turn time multiplier for carpet friction")
     explore_parser.add_argument("--rosbag", action="store_true", help="Enable ROS2 bag recording")
+    explore_parser.add_argument("--yolo", action="store_true", help="Enable YOLO object detection")
     explore_parser.set_defaults(func=cmd_explore)
+
 
     # Stop command
     stop_parser = subparsers.add_parser("stop", help="Stop motors")

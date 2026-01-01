@@ -148,10 +148,14 @@ class ExplorationController:
         console.print(f"[yellow]Exploration stopped: {reason}[/yellow]")
 
     def update_sensors(self, lidar_ranges: list, lidar_angle_min: float, lidar_angle_increment: float,
-                       depth_data: Optional[list] = None, depth_width: int = 0, depth_height: int = 0) -> None:
+                       depth_data: Optional[list] = None, depth_width: int = 0, depth_height: int = 0,
+                       hazards: Optional[List[dict]] = None) -> None:
         """Update sensor data."""
         # Update lidar
         self.sensors.update_lidar(lidar_ranges, lidar_angle_min, lidar_angle_increment)
+        
+        # Update hazards
+        self.sensors.update_hazards(hazards)
 
         # Update depth if available
         if depth_data:

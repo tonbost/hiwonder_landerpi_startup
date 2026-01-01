@@ -47,6 +47,9 @@ class ObstacleState:
     should_slow: bool = False
     obstacle_angle: float = 0.0  # degrees, 0 = front
     timestamp: float = 0.0
+    semantic_hazard: bool = False
+    hazard_type: str = ""
+
 
 
 class SensorFusion:
@@ -114,6 +117,26 @@ class SensorFusion:
         else:
             self.state.depth_distance = float('inf')
         return self.state.depth_distance
+
+    def update_hazards(self, hazards: List[dict]) -> None:
+        """Update from semantic hazards."""
+        if not hazards:
+            self.state.semantic_hazard = False
+            self.state.hazard_type = ""
+            return
+
+        # Check for immediate threats
+        for h in hazards:
+            if h["distance"] < self.config.stop_distance * 1.5:  # Extra margin for semantic threats
+                self.state.semantic_hazard = True
+                self.state.hazard_type = h["type"]
+                # Override closest distance if this is closer
+                if h["distance"] < self.state.closest_distance:
+                    self.state.closest_distance = h["distance"]
+                return
+        
+        self.state.semantic_hazard = False
+
 
     def update_lidar(self, ranges: List[float], angle_min: float, angle_increment: float) -> float:
         """
@@ -200,6 +223,11 @@ class SensorFusion:
             not self.state.should_stop and
             self.state.closest_distance < self.config.slow_distance
         )
+
+        # Semantic Override - YOLO detected hazard takes priority
+        if self.state.semantic_hazard:
+            self.state.should_stop = True
+
         self.state.timestamp = time.time()
 
         return self.state

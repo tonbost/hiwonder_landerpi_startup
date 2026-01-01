@@ -151,6 +151,7 @@ def start(
     speed: float = typer.Option(0.35, help="Forward speed (m/s)"),
     turn_multiplier: float = typer.Option(2.5, "--turn-multiplier", help="Turn time multiplier for carpet friction (default: 2.5)"),
     rosbag: bool = typer.Option(False, "--rosbag", help="Enable ROS2 bag recording"),
+    yolo: bool = typer.Option(False, "--yolo", help="Enable YOLO object detection"),
 ):
     """Start exploration on robot."""
     config = load_config()
@@ -163,13 +164,15 @@ def start(
         sys.exit(1)
 
     rosbag_str = "[green]Yes[/green]" if rosbag else "No"
+    yolo_str = "[green]Yes[/green]" if yolo else "No"
     console.print(Panel.fit(
         f"[bold]Start Exploration[/bold]\n\n"
         f"Host: {host}\n"
         f"Duration: {duration} min\n"
         f"Speed: {speed} m/s\n"
         f"Turn multiplier: {turn_multiplier}x (carpet friction)\n"
-        f"ROS2 bag: {rosbag_str}\n\n"
+        f"ROS2 bag: {rosbag_str}\n"
+        f"YOLO: {yolo_str}\n\n"
         f"[bold red]Robot will MOVE![/bold red]",
         title="Start",
         border_style="yellow"
@@ -209,6 +212,8 @@ def start(
         cmd = f"python3 ~/{REMOTE_SCRIPT} explore --duration {duration} --speed {speed} --turn-multiplier {turn_multiplier}"
         if rosbag:
             cmd += " --rosbag"
+        if yolo:
+            cmd += " --yolo"
         conn.run(cmd, pty=True)
 
     except KeyboardInterrupt:
