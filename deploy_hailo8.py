@@ -308,14 +308,73 @@ def deploy():
 
 
 @app.command()
-def test():
+def test(
+    benchmark: bool = typer.Option(False, "--benchmark", help="Run hailortcli benchmark"),
+):
     """Run Hailo validation test."""
     console.print(Panel("Running Hailo Validation Test", style="bold blue"))
-    console.print("[yellow]TODO: Implement validation test[/yellow]")
-    console.print("\nThis will:")
-    console.print("  1. Run hailortcli benchmark")
-    console.print("  2. Test inference on sample image")
-    console.print("  3. Report FPS and latency")
+
+    conn = get_connection()
+    config = load_config()
+    home_dir = f"/home/{config['user']}"
+
+    # Check device is accessible
+    console.print("\n[bold]Device Check:[/bold]")
+    result = conn.run("hailortcli scan", hide=True, warn=True)
+    if result.return_code != 0:
+        console.print("[red]Hailo device not accessible. Run 'deploy_hailo8.py install' first.[/red]")
+        return
+    console.print("  [green]✓[/green] Device accessible")
+
+    # Check model exists
+    console.print("\n[bold]Model Check:[/bold]")
+    model_path = f"{home_dir}/landerpi/hailo/models/yolo11n_hailo.hef"
+    result = conn.run(f"ls {model_path}", hide=True, warn=True)
+    if result.return_code != 0:
+        console.print(f"  [yellow]![/yellow] Model not found: {model_path}")
+        console.print("  Run 'deploy_hailo8.py deploy' after converting model")
+        # Continue with other tests
+    else:
+        console.print(f"  [green]✓[/green] Model found: {model_path}")
+
+        # Run benchmark if requested and model exists
+        if benchmark:
+            console.print("\n[bold]Running Benchmark...[/bold]")
+            result = conn.run(f"hailortcli benchmark {model_path}", hide=False, warn=True)
+            if result.return_code == 0:
+                console.print("\n[green]Benchmark complete![/green]")
+            else:
+                console.print("[red]Benchmark failed[/red]")
+
+    # Test Python import and basic device access
+    console.print("\n[bold]Python Integration Test:[/bold]")
+    test_script = '''
+import sys
+try:
+    from hailo_platform import HEF, VDevice
+    print("  ✓ hailo_platform imported")
+
+    vdevice = VDevice()
+    print("  ✓ VDevice created")
+
+    # Try loading HEF if path provided
+    if len(sys.argv) > 1:
+        import os
+        if os.path.exists(sys.argv[1]):
+            hef = HEF(sys.argv[1])
+            print(f"  ✓ HEF loaded: {hef.get_input_vstream_infos()[0].shape}")
+
+    print("\\n  [SUCCESS] Hailo integration working!")
+except Exception as e:
+    print(f"  ✗ Error: {e}")
+    sys.exit(1)
+'''
+    result = conn.run(f"python3 -c '{test_script}' {model_path}", hide=False, warn=True)
+
+    if result.return_code == 0:
+        console.print("\n[bold green]All tests passed![/bold green]")
+    else:
+        console.print("\n[bold yellow]Some tests failed. Check output above.[/bold yellow]")
 
 
 if __name__ == "__main__":
