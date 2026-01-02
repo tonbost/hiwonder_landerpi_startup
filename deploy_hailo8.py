@@ -159,15 +159,95 @@ def status():
 
 
 @app.command()
-def install():
+def install(
+    skip_reboot: bool = typer.Option(False, "--skip-reboot", help="Skip reboot prompt after DKMS install"),
+):
     """Install HailoRT driver stack on robot."""
     console.print(Panel("Installing HailoRT Driver", style="bold blue"))
-    console.print("[yellow]TODO: Implement driver installation[/yellow]")
-    console.print("\nThis will:")
-    console.print("  1. Add Hailo APT repository")
-    console.print("  2. Install hailort and hailort-dkms packages")
-    console.print("  3. Load hailo_pci kernel module")
-    console.print("  4. Install Python bindings")
+
+    conn = get_connection()
+    config = load_config()
+    home_dir = f"/home/{config['user']}"
+    marker_dir = f"{home_dir}/.landerpi_setup"
+
+    # Create marker directory
+    conn.run(f"mkdir -p {marker_dir}", hide=True)
+
+    def is_done(step: str) -> bool:
+        result = conn.run(f"test -f {marker_dir}/hailo_{step}", hide=True, warn=True)
+        return result.return_code == 0
+
+    def mark_done(step: str):
+        conn.run(f"touch {marker_dir}/hailo_{step}", hide=True)
+
+    # Step 1: Add Hailo repository
+    if is_done("repo_added"):
+        console.print("[dim]Step 1: Hailo repository already added[/dim]")
+    else:
+        console.print("\n[bold]Step 1: Adding Hailo APT repository...[/bold]")
+        conn.sudo(
+            "wget -qO - https://hailo.ai/keys/hailo-public.gpg | "
+            "gpg --dearmor -o /usr/share/keyrings/hailo-archive-keyring.gpg",
+            hide=True,
+            pty=True
+        )
+        conn.sudo(
+            'echo "deb [arch=arm64 signed-by=/usr/share/keyrings/hailo-archive-keyring.gpg] '
+            'https://hailo.ai/raspberry-pi/ stable main" | '
+            'tee /etc/apt/sources.list.d/hailo.list',
+            hide=True,
+            pty=True
+        )
+        mark_done("repo_added")
+        console.print("  [green]✓[/green] Repository added")
+
+    # Step 2: Install packages
+    if is_done("packages_installed"):
+        console.print("[dim]Step 2: HailoRT packages already installed[/dim]")
+    else:
+        console.print("\n[bold]Step 2: Installing HailoRT packages...[/bold]")
+        console.print("  Updating package lists...")
+        conn.sudo("apt-get update -qq", hide=True, pty=True)
+        console.print("  Installing hailort...")
+        conn.sudo("apt-get install -y hailort", hide=True, pty=True)
+        console.print("  Installing hailort-dkms...")
+        conn.sudo("apt-get install -y hailort-dkms", hide=True, pty=True)
+        mark_done("packages_installed")
+        console.print("  [green]✓[/green] Packages installed")
+
+    # Step 3: Load kernel module
+    console.print("\n[bold]Step 3: Loading kernel module...[/bold]")
+    conn.sudo("modprobe hailo_pci", hide=True, warn=True, pty=True)
+
+    # Verify device node
+    result = conn.run("ls /dev/hailo0", hide=True, warn=True)
+    if result.return_code == 0:
+        console.print("  [green]✓[/green] /dev/hailo0 available")
+    else:
+        console.print("  [yellow]![/yellow] /dev/hailo0 not found - may need reboot")
+        if not skip_reboot:
+            console.print("\n[bold yellow]Reboot recommended to load DKMS module.[/bold yellow]")
+            console.print(f"Run: ssh {config['user']}@{config['host']} 'sudo reboot'")
+            console.print("Then re-run: uv run python deploy_hailo8.py install --skip-reboot")
+            return
+
+    # Step 4: Install Python bindings
+    if is_done("python_installed"):
+        console.print("[dim]Step 4: Python bindings already installed[/dim]")
+    else:
+        console.print("\n[bold]Step 4: Installing Python bindings...[/bold]")
+        conn.run("pip install hailort --break-system-packages", hide=True)
+        mark_done("python_installed")
+        console.print("  [green]✓[/green] Python bindings installed")
+
+    # Verify
+    console.print("\n[bold]Verification:[/bold]")
+    result = conn.run("hailortcli scan", hide=True, warn=True)
+    if result.return_code == 0:
+        console.print(result.stdout)
+        console.print("\n[bold green]HailoRT installation complete![/bold green]")
+    else:
+        console.print("[red]Verification failed. Check logs above.[/red]")
 
 
 @app.command()
