@@ -254,11 +254,57 @@ def install(
 def deploy():
     """Upload models and ROS2 node to robot."""
     console.print(Panel("Deploying Hailo Models and Node", style="bold blue"))
-    console.print("[yellow]TODO: Implement deployment[/yellow]")
-    console.print("\nThis will:")
-    console.print("  1. Upload HEF models to ~/landerpi/hailo/models/")
-    console.print("  2. Upload yolo_hailo ROS2 node")
-    console.print("  3. Update launch configuration")
+
+    conn = get_connection()
+    config = load_config()
+    home_dir = f"/home/{config['user']}"
+
+    # Create remote directories
+    console.print("\n[bold]Creating directories...[/bold]")
+    conn.run(f"mkdir -p {home_dir}/landerpi/hailo/models", hide=True)
+    conn.run(f"mkdir -p {home_dir}/landerpi/ros2_nodes/yolo_hailo", hide=True)
+
+    # Upload models
+    console.print("\n[bold]Uploading models...[/bold]")
+    models_dir = HAILO_DIR / "models"
+    hef_files = list(models_dir.glob("*.hef"))
+    if hef_files:
+        for hef_file in hef_files:
+            remote_path = f"{home_dir}/landerpi/hailo/models/{hef_file.name}"
+            console.print(f"  Uploading {hef_file.name}...")
+            conn.put(str(hef_file), remote_path)
+        console.print(f"  [green]✓[/green] Uploaded {len(hef_files)} model(s)")
+    else:
+        console.print("  [yellow]![/yellow] No HEF models found in hailo8-int/models/")
+        console.print("  See docs/MODEL_CONVERSION.md for conversion instructions")
+
+    # Upload ROS2 node
+    console.print("\n[bold]Uploading ROS2 node...[/bold]")
+    node_dir = HAILO_DIR / "ros2_nodes" / "yolo_hailo"
+    if node_dir.exists():
+        for item in node_dir.rglob("*"):
+            if item.is_file() and "__pycache__" not in str(item):
+                rel_path = item.relative_to(node_dir)
+                remote_path = f"{home_dir}/landerpi/ros2_nodes/yolo_hailo/{rel_path}"
+                remote_dir = str(Path(remote_path).parent)
+                conn.run(f"mkdir -p {remote_dir}", hide=True)
+                conn.put(str(item), remote_path)
+                console.print(f"  [dim]{rel_path}[/dim]")
+        console.print("  [green]✓[/green] ROS2 node uploaded")
+    else:
+        console.print("  [red]✗[/red] ROS2 node directory not found")
+
+    # Upload hazard config
+    console.print("\n[bold]Uploading config...[/bold]")
+    config_src = Path(__file__).parent / "config" / "yolo_hazards.json"
+    if config_src.exists():
+        conn.put(str(config_src), f"{home_dir}/landerpi/config/yolo_hazards.json")
+        console.print("  [green]✓[/green] Hazard config uploaded")
+
+    console.print("\n[bold green]Deployment complete![/bold green]")
+    console.print("\nTo use Hailo-accelerated YOLO:")
+    console.print("  1. Ensure ROS2 stack is running: uv run python deploy_ros2_stack.py deploy")
+    console.print("  2. Launch with Hailo: use_hailo:=true in launch config")
 
 
 @app.command()
