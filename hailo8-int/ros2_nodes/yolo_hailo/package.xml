@@ -3,11 +3,20 @@
 <package format="3">
   <name>yolo_hailo</name>
   <version>0.1.0</version>
-  <description>YOLOv11 object detection with Hailo-8 acceleration</description>
-  <maintainer email="robot@landerpi.local">LanderPi</maintainer>
+  <description>Hailo-accelerated YOLO object detection node</description>
+  <maintainer email="user@example.com">LanderPi</maintainer>
   <license>MIT</license>
 
-  <!-- TODO: Add dependencies -->
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

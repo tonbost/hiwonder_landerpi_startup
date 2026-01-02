@@ -1,11 +1,11 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 package_name = 'yolo_hailo'
 
 setup(
     name=package_name,
     version='0.1.0',
-    packages=[package_name],
+    packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -14,13 +14,13 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='LanderPi',
-    maintainer_email='robot@landerpi.local',
-    description='YOLOv11 object detection with Hailo-8 acceleration',
+    maintainer_email='user@example.com',
+    description='Hailo-accelerated YOLO object detection node',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # TODO: Add node entry points
+            'yolo_hailo_node = yolo_hailo.yolo_hailo_node:main',
         ],
     },
 )
