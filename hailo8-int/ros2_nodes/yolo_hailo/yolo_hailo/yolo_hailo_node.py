@@ -52,7 +52,7 @@ class YoloHailoNode(Node):
             raise RuntimeError('Hailo platform not available')
 
         # Model parameters
-        self.declare_parameter('hef_path', str(Path.home() / 'landerpi/hailo/models/yolo11n_hailo.hef'))
+        self.declare_parameter('hef_path', str(Path.home() / 'landerpi/hailo/models/yolov11n.hef'))
         self.declare_parameter('confidence_threshold', 0.4)
         self.declare_parameter('nms_threshold', 0.45)
         self.declare_parameter('input_width', 640)
