@@ -17,13 +17,16 @@ YOLO-based semantic hazard detection for LanderPi robot. Uses YOLOv11n to detect
 ## YOLO Pipeline
 
 ```
-/aurora/rgb/image_raw → yolo_detector → /yolo/detections → obstacle_fusion → /hazards
-        (camera)           (YOLO)         (Detection2D)        (fusion)        (JSON)
+/aurora/rgb/image_raw → yolo_hailo_bridge → /yolo/detections → obstacle_fusion → /hazards
+        (camera)              (YOLO)             ↓                  (fusion)        (JSON)
+                                          /yolo/annotated_image
+                                                 ↓
+                                              RViz
 ```
 
 | Node | Subscribes | Publishes | Purpose |
 |------|------------|-----------|---------|
-| `yolo_detector` | `/aurora/rgb/image_raw` | `/yolo/detections` | Run YOLOv11n inference |
+| `yolo_hailo_bridge` | `/aurora/rgb/image_raw` | `/yolo/detections`, `/yolo/annotated_image`, `/hazards` | Run YOLOv11 inference via Hailo |
 | `obstacle_fusion` | `/yolo/detections`, `/scan` | `/hazards` | Correlate detections with lidar distance |
 
 ## Usage
@@ -35,14 +38,18 @@ YOLO-based semantic hazard detection for LanderPi robot. Uses YOLOv11n to detect
 # Deploy explorer (first time)
 uv run python deploy_explorer.py deploy
 
-# Start exploration with YOLO
-uv run python deploy_explorer.py start --duration 10 --yolo
+# Start exploration with YOLO (CPU, 2-5 FPS)
+uv run python deploy_explorer.py start --yolo --duration 10
+
+# Start exploration with YOLO + Hailo-8 acceleration (25-40 FPS)
+uv run python deploy_explorer.py start --yolo-hailo --duration 10
 
 # With debug logging (saves annotated images to ~/yolo_logs)
 uv run python deploy_explorer.py start --yolo --yolo-logging --duration 10
+uv run python deploy_explorer.py start --yolo-hailo --yolo-logging --duration 10
 
 # Combined with ROS2 bag recording
-uv run python deploy_explorer.py start --yolo --rosbag --duration 15
+uv run python deploy_explorer.py start --yolo-hailo --rosbag --duration 15
 ```
 
 **Directly on robot:**
@@ -82,9 +89,29 @@ ssh user@robot "docker exec landerpi-ros2 bash -c 'source /opt/ros/humble/setup.
 | Topic | Message Type | Rate | Description |
 |-------|--------------|------|-------------|
 | `/aurora/rgb/image_raw` | `sensor_msgs/Image` | ~30 Hz | RGB camera feed (input) |
-| `/yolo/detections` | `vision_msgs/Detection2DArray` | ~5-10 Hz | Raw YOLO detections |
+| `/yolo/detections` | `vision_msgs/Detection2DArray` | ~14 Hz | Raw YOLO detections |
+| `/yolo/annotated_image` | `sensor_msgs/Image` | ~14 Hz | Live camera feed with bounding boxes |
 | `/hazards` | `std_msgs/String` | 10 Hz | JSON hazards with distance |
 | `/scan` | `sensor_msgs/LaserScan` | 10 Hz | Lidar data (for distance) |
+
+### Live Annotated Video Stream
+
+The `/yolo/annotated_image` topic publishes camera frames with YOLO bounding boxes drawn in real-time (~14 Hz when using Hailo).
+
+**Annotation style:**
+- Red boxes: Hazard classes (person, dog, cat, etc.)
+- Green boxes: Other detected objects
+- Labels: Class name + confidence score
+
+**View with RViz:**
+1. Connect RViz to robot's ROS2 network
+2. Add Image display
+3. Set topic to `/yolo/annotated_image`
+
+**Verify topic is publishing:**
+```bash
+ssh user@robot "docker exec landerpi-ros2 bash -c 'source /opt/ros/humble/setup.bash && ros2 topic hz /yolo/annotated_image'"
+```
 
 ## Hazard Classes
 
@@ -428,21 +455,45 @@ This means the robot stops **0.8m away from people/bottles** but can get **0.15m
 
 ## Hailo Acceleration
 
-For 5-10x faster inference, use Hailo-8 hardware acceleration:
+For 5-10x faster inference, use `--yolo-hailo` flag for Hailo-8 hardware acceleration:
 
 ```bash
-# Load the landerpi-hailo skill for setup instructions
+# One-time setup
+uv run python deploy_hailo8.py check    # Check hardware
+uv run python deploy_hailo8.py install  # Install driver
+
+# Download pre-compiled model (no conversion needed!)
+cd hailo8-int/conversion
+curl -L -o yolov11n.hef \
+  "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.17.0/hailo8/yolov11n.hef"
+mkdir -p ../models && cp yolov11n.hef ../models/
+cd ../..
+
+# Deploy models to robot
+uv run python deploy_hailo8.py deploy
+
+# Use Hailo during exploration
+uv run python deploy_explorer.py start --yolo-hailo --duration 10
 ```
 
-See `landerpi-hailo` skill for:
-- Driver installation
-- Model conversion (YOLOv11 → HEF)
-- Hardware-accelerated node deployment
+| Backend | FPS | Latency | Flag |
+|---------|-----|---------|------|
+| CPU | 2-5 | 200-500ms | `--yolo` |
+| Hailo-8 | 25-40 | 25-40ms | `--yolo-hailo` |
 
-| Backend | FPS | Latency |
-|---------|-----|---------|
-| CPU | 2-5 | 200-500ms |
-| Hailo-8 | 25-40 | 25-40ms |
+**Pre-compiled models available:**
+| Model | mAP | Size |
+|-------|-----|------|
+| yolov11n | 39.0 | ~8 MB |
+| yolov11s | 46.3 | ~18 MB |
+| yolov11m | 51.1 | ~34 MB |
+
+Full model list: https://github.com/hailo-ai/hailo_model_zoo/blob/master/docs/public_models/HAILO8/HAILO8_object_detection.rst
+
+See `landerpi-hailo` skill for:
+- Driver installation (HailoRT 4.23, Python 3.13 support)
+- Manual model conversion (for custom-trained models)
+- Troubleshooting
 
 ## Troubleshooting
 
@@ -585,6 +636,85 @@ See `landerpi-camera` skill for camera troubleshooting.
 # Quick check
 uv run python validation/test_cameradepth_ros2.py check
 ```
+
+### Problem: Robot doesn't stop for hazards (read_hazards blocking)
+
+**Symptoms:**
+- `/hazards` topic is being published correctly
+- YOLO detections working at good FPS
+- Robot doesn't stop, continues moving into hazards
+- Control loop runs slower than expected (~0.5Hz instead of 10Hz)
+
+**Root Cause:**
+The `read_hazards()` function in `ros2_hardware.py` uses `ros2 topic echo` which has significant initialization overhead (~300-500ms). This blocks the control loop, causing:
+1. Lidar readings to be processed too slowly
+2. Robot can't react to obstacles in time
+3. Even lidar-detected obstacles are missed
+
+**Diagnosis:**
+```bash
+# Check control loop rate during exploration
+# Look for "Status:" lines - they should appear every 5 seconds
+# If control loop is slow, status updates will be delayed
+
+# Time the hazard reading function
+ssh user@robot "time docker exec landerpi-ros2 bash -c 'source /opt/ros/humble/setup.bash && timeout 0.5 ros2 topic echo /hazards --once 2>/dev/null'"
+```
+
+**Key insight:** `ros2 topic echo` takes 300-500ms just to initialize the ROS2 node before it can receive any messages. This is unavoidable overhead.
+
+**Solution (implemented):**
+1. **Caching**: Only read hazards every 0.5 seconds, cache results
+2. **Short timeout**: Use `timeout 0.3` inside docker, 1.0s subprocess timeout
+3. **Keep cached value**: If read fails, keep previous cached hazards
+
+```python
+# ros2_hardware.py caching pattern
+def read_hazards(self) -> List[dict]:
+    now = time.time()
+    if now - self._last_hazard_time < self._hazard_read_interval:
+        return self._cached_hazards  # Return cached value
+
+    self._last_hazard_time = now
+    # ... read with short timeout ...
+    return self._cached_hazards
+```
+
+**Limitation:** Even with caching, the first read after cache expiry may return empty if `ros2 topic echo` doesn't receive a message within the timeout. This is acceptable because:
+1. Lidar provides primary obstacle detection (always working)
+2. YOLO hazards are additive safety layer
+3. Next cache read will likely succeed
+
+**Future improvement:** A persistent ROS2 subscriber process could eliminate initialization overhead entirely.
+
+### Problem: JSON truncation in hazard messages
+
+**Symptoms:**
+- `/hazards` messages are being read but parsing fails
+- JSON ends with `...` instead of `}`
+- Partial hazard data extracted
+
+**Root Cause:**
+`ros2 topic echo` truncates long string fields. The `/hazards` topic publishes JSON inside a `std_msgs/String` data field, which gets truncated if too long.
+
+**Workaround (implemented):**
+Use regex to extract individual hazard objects from truncated JSON:
+
+```python
+# Handle truncated JSON like: {"hazards": [{"type": "person", "distance": 0.5, ...
+for match in re.finditer(
+    r'\{"type":\s*"([^"]+)",\s*"distance":\s*([\d.]+),\s*"angle":\s*([-\d.]+),\s*"score":\s*([\d.]+),\s*"source":\s*"([^"]+)"\}',
+    truncated_output
+):
+    hazards.append({
+        "type": match.group(1),
+        "distance": float(match.group(2)),
+        # ... etc
+    })
+```
+
+**Better solution (not yet implemented):**
+Publish hazards as separate ROS2 message type instead of JSON string, or use shorter field names to fit within ros2 topic echo's display limits.
 
 ### Problem: Camera stops mid-exploration (stability issue)
 

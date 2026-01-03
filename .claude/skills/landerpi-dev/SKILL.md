@@ -428,6 +428,123 @@ cmd = f"timeout 2 ros2 topic echo --once /scan --field ranges"
 result = self.run_ros2_command(cmd, timeout=5.0)
 ```
 
+## ROS2 Package Structure (ament_python)
+
+All ROS2 nodes in `ros2_nodes/` use `ament_python` build type. **A common pitfall is missing `setup.cfg`**, which causes executables to be installed in the wrong location.
+
+### Required Files for ament_python Package
+
+```
+ros2_nodes/<package_name>/
+├── package.xml              # ROS2 package manifest
+├── setup.py                 # Python package setup
+├── setup.cfg                # CRITICAL: Script install location
+├── resource/
+│   └── <package_name>       # Empty marker file (required by ament)
+└── <package_name>/
+    ├── __init__.py          # Package init (can be empty)
+    └── <node_name>.py       # Node implementation with main()
+```
+
+### setup.cfg (CRITICAL)
+
+**Without `setup.cfg`, ROS2 launch will fail with:**
+```
+[ERROR] [launch]: package '<pkg>' found at '/ros2_ws/install/<pkg>',
+but libexec directory '/ros2_ws/install/<pkg>/lib/<pkg>' does not exist
+```
+
+**Root cause:** By default, setuptools installs console_scripts to `bin/`, but ROS2 `launch_ros.actions.Node` expects them in `lib/<package_name>/`.
+
+**Required setup.cfg content:**
+```ini
+[develop]
+script_dir=$base/lib/<package_name>
+[install]
+install_scripts=$base/lib/<package_name>
+```
+
+**Example for `yolo_hailo_bridge`:**
+```ini
+[develop]
+script_dir=$base/lib/yolo_hailo_bridge
+[install]
+install_scripts=$base/lib/yolo_hailo_bridge
+```
+
+### setup.py Template
+
+```python
+from setuptools import setup
+
+package_name = 'my_ros2_node'
+
+setup(
+    name=package_name,
+    version='0.1.0',
+    packages=[package_name],
+    data_files=[
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
+    ],
+    install_requires=['setuptools'],
+    zip_safe=True,
+    maintainer='LanderPi',
+    maintainer_email='landerpi@example.com',
+    description='Node description',
+    license='MIT',
+    entry_points={
+        'console_scripts': [
+            'node_executable = my_ros2_node.node_file:main',
+        ],
+    },
+)
+```
+
+### package.xml Template
+
+```xml
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_ros2_node</name>
+  <version>0.1.0</version>
+  <description>Node description</description>
+  <maintainer email="landerpi@example.com">LanderPi</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+```
+
+### ROS2 Package Checklist
+
+When creating a new ROS2 node:
+
+1. [ ] `package.xml` has `<build_type>ament_python</build_type>`
+2. [ ] `setup.py` has entry_points with console_scripts
+3. [ ] **`setup.cfg` exists with correct `install_scripts` path**
+4. [ ] `resource/<package_name>` marker file exists (can be empty)
+5. [ ] `<package_name>/__init__.py` exists
+6. [ ] Node file has `main()` function matching entry_point
+
+### Debugging ROS2 Package Install
+
+After `colcon build`, verify executable location:
+
+```bash
+# Should show executable in lib/<package_name>/, NOT bin/
+docker exec landerpi-ros2 ls -la /ros2_ws/install/<package_name>/lib/<package_name>/
+
+# If in bin/ instead, setup.cfg is missing or incorrect
+docker exec landerpi-ros2 ls -la /ros2_ws/install/<package_name>/bin/
+```
+
 ## Configuration Management
 
 ### Connection Config (config.json)
@@ -696,6 +813,314 @@ When working with Hailo-8 accelerated code:
    - Requires kernel module (`hailo_pci`)
    - Device node at `/dev/hailo0`
    - Python bindings via `pip install hailort`
+
+## ZeroMQ Bridge Pattern
+
+When bridging between different Python environments (e.g., host Python 3.13 + Docker Python 3.10):
+
+### Server Side (Host)
+
+```python
+import zmq
+import json
+
+class InferenceServer:
+    def __init__(self, port: int = 5555):
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.REP)
+        self.socket.bind(f"tcp://*:{port}")
+
+    def run(self):
+        while True:
+            if self.socket.poll(1000):  # 1 second timeout
+                message = self.socket.recv()
+                request = json.loads(message.decode())
+
+                if request.get('type') == 'ping':
+                    response = {'status': 'ok'}
+                elif request.get('type') == 'infer':
+                    # Process inference
+                    result = self.infer(request['data'])
+                    response = {'status': 'ok', 'detections': result}
+                else:
+                    response = {'status': 'error', 'message': 'Unknown type'}
+
+                self.socket.send(json.dumps(response).encode())
+
+    def shutdown(self):
+        self.socket.close()
+        self.context.term()
+```
+
+### Annotated Image Publishing Pattern
+
+When adding annotated image output to a detection node:
+
+```python
+import cv2
+import numpy as np
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+
+class DetectorNode(Node):
+    def __init__(self):
+        super().__init__('detector_node')
+
+        self.cv_bridge = CvBridge()
+        self.annotated_publisher = self.create_publisher(
+            Image, '/yolo/annotated_image', 10
+        )
+
+    def _draw_annotations(self, cv_image: np.ndarray, detections: list) -> np.ndarray:
+        """Draw bounding boxes and labels on image."""
+        for det in detections:
+            cx, cy = int(det['cx']), int(det['cy'])
+            w, h = int(det['width']), int(det['height'])
+            x1, y1 = cx - w // 2, cy - h // 2
+            x2, y2 = cx + w // 2, cy + h // 2
+
+            # Red for hazards, green for others (BGR format)
+            is_hazard = det['class'] in self.hazard_classes
+            color = (0, 0, 255) if is_hazard else (0, 255, 0)
+
+            cv2.rectangle(cv_image, (x1, y1), (x2, y2), color, 2)
+
+            label = f"{det['class']} {det['score']:.2f}"
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(cv_image, (x1, y1-lh-6), (x1+lw+4, y1), color, -1)
+            cv2.putText(cv_image, label, (x1+2, y1-4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        return cv_image
+
+    def _publish_annotated_image(self, original_msg: Image, detections: list):
+        """Draw annotations and publish."""
+        try:
+            cv_image = self.cv_bridge.imgmsg_to_cv2(original_msg, 'bgr8')
+            annotated = self._draw_annotations(cv_image, detections)
+            annotated_msg = self.cv_bridge.cv2_to_imgmsg(annotated, 'bgr8')
+            annotated_msg.header = original_msg.header
+            self.annotated_publisher.publish(annotated_msg)
+        except Exception:
+            pass  # Skip frame on error
+```
+
+**Dependencies for package.xml:**
+```xml
+<exec_depend>cv_bridge</exec_depend>
+```
+
+**View with RViz:** Add Image display, set topic to `/yolo/annotated_image`
+
+### Client Side (ROS2 Node in Docker)
+
+```python
+import zmq
+import json
+from rclpy.node import Node
+
+class BridgeNode(Node):
+    def __init__(self):
+        super().__init__('bridge_node')
+
+        # IMPORTANT: Use _zmq_ctx, NOT context (reserved by ROS2 Node)
+        self._zmq_ctx = zmq.Context()
+        self.socket = self._zmq_ctx.socket(zmq.REQ)
+        self.socket.setsockopt(zmq.RCVTIMEO, 500)  # 500ms timeout
+        self.socket.setsockopt(zmq.SNDTIMEO, 500)
+        self.socket.setsockopt(zmq.LINGER, 0)
+        self.socket.connect("tcp://localhost:5555")
+
+    def send_request(self, data: dict) -> dict:
+        try:
+            self.socket.send(json.dumps(data).encode())
+            response = json.loads(self.socket.recv().decode())
+            return response
+        except zmq.ZMQError as e:
+            self.get_logger().warn(f'ZMQ error: {e}')
+            self._reconnect()
+            return {'status': 'error'}
+
+    def _reconnect(self):
+        self.socket.close()
+        self.socket = self._zmq_ctx.socket(zmq.REQ)
+        # ... reconfigure socket options
+        self.socket.connect("tcp://localhost:5555")
+
+    def destroy_node(self):
+        self.socket.close()
+        self._zmq_ctx.term()
+        super().destroy_node()
+```
+
+### ROS2 Node Reserved Properties
+
+**CRITICAL:** ROS2 `rclpy.node.Node` reserves certain property names. Using them causes `AttributeError: can't set attribute`.
+
+| Reserved Name | Use Instead |
+|---------------|-------------|
+| `context` | `_zmq_ctx`, `zmq_context` |
+| `node_name` | Custom prefix like `_node_name` |
+| `logger` | Use `get_logger()` method |
+
+Example error:
+```
+AttributeError: can't set attribute 'context'
+```
+
+Fix:
+```python
+# WRONG
+self.context = zmq.Context()
+
+# CORRECT
+self._zmq_ctx = zmq.Context()
+```
+
+## Reading ROS2 Topics from Python Subprocess
+
+When reading ROS2 topics from Python code running on the robot (not in Docker), there are critical performance considerations.
+
+### The Problem: ros2 topic echo Initialization Overhead
+
+`ros2 topic echo` creates a new ROS2 node each time it runs. This initialization takes **300-500ms** before any messages can be received:
+
+```bash
+# This takes ~400ms even if /hazards publishes at 10Hz
+time docker exec landerpi-ros2 bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /hazards --once'
+```
+
+**Impact on control loops:**
+- A 10Hz control loop expects 100ms per iteration
+- A 400ms blocking read causes the loop to run at ~2Hz
+- Robot can't react to obstacles fast enough
+- Even lidar detection fails because the loop is too slow
+
+### Shell Quoting in Nested Docker Commands
+
+Running Python code inside `docker exec` with shell-executed subprocess has **three layers of quoting**:
+1. Python subprocess shell
+2. Docker exec shell
+3. Inner bash shell
+
+**Common failure:**
+```python
+# This FAILS with SyntaxError - quotes are stripped
+cmd = '''docker exec landerpi-ros2 bash -c "python3 -c 'import rclpy; n = rclpy.create_node(\"reader\")'"'''
+
+# Error: n = rclpy.create_node(reader)  <-- quotes stripped!
+```
+
+**Escape attempts that still fail:**
+```python
+# Still breaks - escaping doesn't survive all layers
+cmd = 'docker exec landerpi-ros2 bash -c "python3 -c \\"x = \'test\'\\""'
+```
+
+**Solution: Avoid inline Python in docker exec**
+```python
+# GOOD: Use ros2 CLI tools with grep/sed outside docker
+cmd = (
+    'docker exec landerpi-ros2 bash -c '
+    '"source /opt/ros/humble/setup.bash && timeout 0.3 ros2 topic echo /hazards 2>/dev/null" '
+    '| grep -m1 "data:" | sed \'s/data: //\''
+)
+```
+
+### Caching Pattern for Slow I/O
+
+When reading data that takes longer than your control loop period, use caching:
+
+```python
+class HardwareInterface:
+    def __init__(self):
+        # Cache state
+        self._last_read_time: float = 0.0
+        self._cached_data: List[dict] = []
+        self._read_interval: float = 0.5  # Only read every 0.5s
+
+    def read_slow_topic(self) -> List[dict]:
+        """Read with caching to avoid blocking control loop."""
+        now = time.time()
+
+        # Return cached value if interval not elapsed
+        if now - self._last_read_time < self._read_interval:
+            return self._cached_data
+
+        self._last_read_time = now
+
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True,
+                text=True, timeout=1.0
+            )
+            if result.stdout.strip():
+                self._cached_data = self._parse_output(result.stdout)
+        except subprocess.TimeoutExpired:
+            pass  # Keep cached value
+
+        return self._cached_data
+```
+
+**Key points:**
+1. Cache interval should be >= expected read time
+2. On timeout, keep previous cached value (don't return empty)
+3. Subprocess timeout should be > inner command timeout
+4. Primary sensors (lidar) should NOT use this pattern - they need real-time data
+
+### Control Loop Considerations
+
+A robot control loop has strict timing requirements:
+
+| Loop Rate | Max Blocking Time | Notes |
+|-----------|-------------------|-------|
+| 10 Hz | 100ms | Typical exploration loop |
+| 20 Hz | 50ms | High-speed navigation |
+| 5 Hz | 200ms | Slow/safe mode |
+
+**Rules:**
+1. **Never block primary sensors** (lidar, IMU) - they determine obstacle avoidance
+2. **Cache secondary data** (YOLO hazards, battery) - they enhance but don't replace primary
+3. **Measure actual timing** before deploying - use `time.time()` around slow calls
+4. **Use background threads** for slow operations if caching isn't sufficient
+
+### Recommended Architecture for Topic Reading
+
+**Legacy approach (fallback when sensor bridge unavailable):**
+```
+Python subprocess → docker exec → ros2 topic echo → parse output
+(~400-500ms per read, cached)
+```
+
+**Current approach (sensor_bridge node - IMPLEMENTED):**
+```
+Docker: sensor_bridge_node → rclpy subscriber → writes JSON to /landerpi_data/
+Host: ROS2Hardware → reads JSON files (~10ms latency)
+```
+
+**Sensor Bridge Files:**
+| File | Topic | Update Rate |
+|------|-------|-------------|
+| `lidar.json` | /scan | 20 Hz |
+| `hazards.json` | /hazards | 20 Hz |
+| `depth_stats.json` | /depth_stats | 10 Hz |
+| `battery.json` | /battery | 1 Hz |
+
+**Configuration:**
+```python
+# In ros2_hardware.py
+ROS2Config(
+    use_file_bridge=True,     # Enable file-based reading (default)
+    data_dir="~/landerpi_data",
+    file_stale_threshold=2.0  # Fallback if data > 2s old
+)
+```
+
+**Performance Comparison:**
+| Metric | Subprocess | Sensor Bridge |
+|--------|------------|---------------|
+| Topic read latency | 400-500ms | 5-10ms |
+| Control loop rate | ~2-3Hz | 10Hz |
+| Obstacle reaction | >1s | <200ms |
 
 ## Resources
 

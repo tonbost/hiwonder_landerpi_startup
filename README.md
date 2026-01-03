@@ -142,6 +142,40 @@ The ROS2 stack:
 - Includes `cmd_vel_bridge` node for velocity commands
 - Publishes lidar data on `/scan`, camera on `/aurora/*`
 - Includes `depth_stats` node for processed depth data on `/depth_stats`
+- Includes `sensor_bridge` node for low-latency sensor data access
+
+#### Sensor Bridge (Low-Latency Architecture)
+
+The sensor bridge provides ~10ms latency for reading ROS2 topics instead of ~400-500ms with subprocess-based `ros2 topic echo`. This is critical for responsive obstacle avoidance during autonomous exploration.
+
+**Architecture:**
+```
+Docker container:
+  sensor_bridge_node → subscribes to /scan, /hazards, /depth_stats, /battery
+                     → writes JSON to ~/landerpi_data/*.json (shared volume)
+
+Host Python (robot_explorer.py):
+  ROS2Hardware → reads ~/landerpi_data/*.json (~10ms latency)
+```
+
+**Performance Improvement:**
+
+| Metric | Before (subprocess) | After (sensor bridge) |
+|--------|---------------------|----------------------|
+| Topic read latency | 400-500ms | 5-10ms |
+| Control loop rate | ~2-3Hz effective | 10Hz |
+| Obstacle reaction time | >1s | <200ms |
+
+**JSON Files (in `~/landerpi_data/`):**
+
+| File | Topic | Contents |
+|------|-------|----------|
+| `lidar.json` | /scan | ranges, angle_min, angle_increment |
+| `hazards.json` | /hazards | hazard list with type, distance, angle |
+| `depth_stats.json` | /depth_stats | min_depth_m, avg_depth_m, valid_percent |
+| `battery.json` | /battery | voltage |
+
+**Automatic Fallback:** If JSON files are missing or stale (>2s old), the system automatically falls back to subprocess-based reading for reliability.
 
 ### Step 7: Validate Hardware (ROS2)
 
@@ -245,10 +279,12 @@ uv run python deploy_explorer.py deploy
 # Start exploration (robot will MOVE!)
 uv run python deploy_explorer.py start --duration 10
 uv run python deploy_explorer.py start --duration 5 --speed 0.35   # Custom speed
-uv run python deploy_explorer.py start --yolo --duration 10        # With YOLO detection
+uv run python deploy_explorer.py start --yolo --duration 10        # With YOLO detection (CPU, 2-5 FPS)
+uv run python deploy_explorer.py start --yolo-hailo --duration 10  # With YOLO + Hailo-8 (25-40 FPS)
 uv run python deploy_explorer.py start --yolo --yolo-logging --duration 10  # YOLO + debug logging
+uv run python deploy_explorer.py start --yolo-hailo --yolo-logging --duration 10  # Hailo + debug logging
 uv run python deploy_explorer.py start --rosbag --duration 10      # With ROS2 bag recording
-uv run python deploy_explorer.py start --yolo --rosbag --duration 15  # Combined
+uv run python deploy_explorer.py start --yolo-hailo --rosbag --duration 15  # Combined
 
 # Control
 uv run python deploy_explorer.py stop     # Emergency stop
@@ -342,6 +378,7 @@ uv run python deploy_ros2_stack.py logs | grep -i yolo
 |-------|-------------|
 | `/aurora/rgb/image_raw` | Camera feed (~30 Hz) |
 | `/yolo/detections` | Detection2DArray when objects detected |
+| `/yolo/annotated_image` | Live camera feed with bounding boxes drawn (~14 Hz) |
 | `/hazards` | JSON hazards when person/cup/bottle/stop sign within 1m |
 
 **Quick test:** Put yourself or a cup in front of camera:
@@ -353,6 +390,25 @@ Expected output when hazard detected:
 ```json
 {"hazards": [{"type": "person", "distance": 0.85, "angle": 5.2, "score": 0.92}]}
 ```
+
+### Live Annotated Video Stream
+
+The `/yolo/annotated_image` topic publishes camera frames with YOLO bounding boxes drawn in real-time (~14 Hz when using Hailo). View it with RViz or any ROS2 image viewer.
+
+**Annotation style:**
+- Red boxes: Hazard classes (person, dog, cat, etc.)
+- Green boxes: Other detected objects
+- Labels: Class name + confidence score
+
+**Verify topic is publishing:**
+```bash
+ssh user@robot "docker exec landerpi-ros2 bash -c 'source /opt/ros/humble/setup.bash && ros2 topic hz /yolo/annotated_image'"
+```
+
+**View with RViz:**
+1. Connect RViz to the robot's ROS2 network
+2. Add Image display
+3. Set topic to `/yolo/annotated_image`
 
 ### Remote Explorer (Legacy)
 
@@ -370,7 +426,8 @@ uv run python validation/test_exploration.py stop
 |------|-------------|---------|
 | `--duration` | Max runtime (minutes) | 5 |
 | `--speed` | Forward speed (m/s) | 0.35 |
-| `--yolo` | Enable YOLO object detection | Off |
+| `--yolo` | Enable YOLO object detection (CPU, 2-5 FPS) | Off |
+| `--yolo-hailo` | Enable YOLO with Hailo-8 acceleration (25-40 FPS) | Off |
 | `--yolo-logging` | Enable YOLO debug logging (images to ~/yolo_logs) | Off |
 | `--rosbag` | Enable ROS2 bag recording | Off |
 | `--turn-multiplier` | Turn time multiplier (carpet friction) | 2.5 |
@@ -380,6 +437,22 @@ uv run python validation/test_exploration.py stop
 ## Hailo 8 AI Accelerator
 
 Hardware-accelerated YOLO inference using the Hailo-8 NPU on PCIe.
+
+### Architecture
+
+HailoRT 4.23 requires Python 3.13, but ROS2 Humble runs Python 3.10 in Docker. The solution is a ZeroMQ bridge:
+
+```
+Host (Python 3.13 + HailoRT):
+  └── hailo_inference_server.py → ZeroMQ server on tcp://localhost:5555
+                                → runs YOLOv11 on Hailo-8 NPU
+                                → managed by systemd (hailo-server.service)
+
+Docker (ROS2 Humble, Python 3.10):
+  └── yolo_hailo_bridge node → subscribes /aurora/rgb/image_raw
+                             → sends images to host via ZeroMQ
+                             → publishes /hazards, /yolo/detections
+```
 
 ### Performance
 
@@ -397,32 +470,59 @@ uv run python deploy_hailo8.py check
 # Install HailoRT driver (one-time, may require reboot)
 uv run python deploy_hailo8.py install
 
-# Deploy models and ROS2 node
+# Download pre-compiled model (recommended)
+cd hailo8-int/conversion
+curl -L -o yolov11n.hef \
+  "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.17.0/hailo8/yolov11n.hef"
+mkdir -p ../models && cp yolov11n.hef ../models/
+cd ../..
+
+# Deploy models, inference server, and systemd service
 uv run python deploy_hailo8.py deploy
 
 # Validate
 uv run python deploy_hailo8.py test --benchmark
-
-# Show device info
-uv run python deploy_hailo8.py status
 ```
 
-### Model Conversion
+### Server Management
 
-Models must be converted to HEF format on an x86_64 machine:
+The Hailo inference server is automatically started by `deploy_explorer.py --yolo-hailo`. Manual control:
+
+```bash
+uv run python deploy_hailo8.py start   # Start inference server
+uv run python deploy_hailo8.py stop    # Stop inference server
+uv run python deploy_hailo8.py logs    # View server logs
+uv run python deploy_hailo8.py logs -f # Follow logs
+```
+
+### Using Hailo with Exploration
+
+Once deployed, use `--yolo-hailo` flag for hardware-accelerated object detection:
+
+```bash
+# Start exploration with Hailo YOLO (25-40 FPS)
+uv run python deploy_explorer.py start --yolo-hailo --duration 10
+
+# Combined with debug logging
+uv run python deploy_explorer.py start --yolo-hailo --yolo-logging --duration 10
+```
+
+### Manual Model Conversion (Advanced)
+
+For custom-trained models, convert to HEF format on an x86_64 machine:
 
 ```bash
 # 1. Export YOLO to ONNX
-yolo export model=yolo11n.pt format=onnx imgsz=640
+yolo export model=yolo11n.pt format=onnx imgsz=640 opset=11
 
 # 2. Convert to HEF (Docker on x86_64)
 cd hailo8-int/conversion
 docker build -t hailo-converter .
 docker run -v $(pwd):/workspace hailo-converter \
-    python convert_yolo.py --input yolo11n.onnx --output yolo11n_hailo.hef
+    python convert_yolo.py --input yolo11n.onnx --output yolov11n.hef
 
 # 3. Copy to models directory and deploy
-cp yolo11n_hailo.hef ../models/
+cp yolov11n.hef ../models/
 uv run python deploy_hailo8.py deploy
 ```
 
@@ -452,7 +552,7 @@ hiwonderSetup/
 │   ├── test_*_ros2.py         # ROS2-based tests
 │   ├── test_exploration.py    # Autonomous exploration
 │   └── exploration/           # Exploration module
-├── ros2_nodes/                # Custom ROS2 nodes (cmd_vel_bridge, arm_controller, yolo_detector)
+├── ros2_nodes/                # Custom ROS2 nodes (cmd_vel_bridge, sensor_bridge, arm_controller, yolo_detector)
 ├── docker/                    # Docker configurations
 ├── drivers/                   # Hardware drivers (depth camera)
 ├── hailo8-int/                # Hailo 8 AI accelerator integration
