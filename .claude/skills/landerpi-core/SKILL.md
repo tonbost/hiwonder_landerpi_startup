@@ -35,6 +35,9 @@ Load credentials from `config.json` in the project root:
 | Voice Test | `uv run python deploy_voicecontroller.py test` | Test voice components |
 | Hailo Check | `uv run python deploy_hailo8.py check` | Hailo hardware/driver status |
 | Hailo Install | `uv run python deploy_hailo8.py install` | Install HailoRT driver |
+| Hailo Deploy | `uv run python deploy_hailo8.py deploy` | Upload models and ROS2 node |
+| Hailo Test | `uv run python deploy_hailo8.py test` | Run validation test |
+| Hailo Status | `uv run python deploy_hailo8.py status` | Show device info |
 
 All tools read credentials from `config.json` automatically.
 
