@@ -33,6 +33,8 @@ Load credentials from `config.json` in the project root:
 | Robot Status | `uv run python validation/test_chassis_direct.py status` | Battery/IMU status |
 | Voice Deploy | `uv run python deploy_voicecontroller.py deploy` | Deploy TARS voice control |
 | Voice Test | `uv run python deploy_voicecontroller.py test` | Test voice components |
+| Hailo Check | `uv run python deploy_hailo8.py check` | Hailo hardware/driver status |
+| Hailo Install | `uv run python deploy_hailo8.py install` | Install HailoRT driver |
 
 All tools read credentials from `config.json` automatically.
 
@@ -58,6 +60,7 @@ A properly configured LanderPi should have:
 | Lidar device | `/dev/ttyUSB0` or `/dev/ttyUSB1` | `ls /dev/ttyUSB*` |
 | I2C | `/dev/i2c-1` | `ls /dev/i2c*` |
 | Motor SDK | `~/ros_robot_controller/ros_robot_controller_sdk.py` | `ls ~/ros_robot_controller/` |
+| Hailo-8 (optional) | `/dev/hailo0` if installed | `lspci \| grep -i hailo` |
 
 ## Docker Configuration
 

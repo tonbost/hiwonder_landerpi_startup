@@ -547,6 +547,156 @@ Before committing new validation tests:
 7. [ ] CLAUDE.md updated with new commands
 8. [ ] Skill documentation updated if applicable
 
+## Sensor Fusion Patterns
+
+### Multi-Sensor Distance with Priority
+
+```python
+@dataclass
+class SensorConfig:
+    stop_distance: float = 0.15  # Lidar obstacles (walls)
+    semantic_stop_distance: float = 0.8  # YOLO hazards (people, pets, bottles)
+    lidar_priority: bool = True  # Lidar as primary sensor
+
+class SensorFusion:
+    def get_obstacle_state(self) -> ObstacleState:
+        # 1. Lidar is PRIMARY distance source
+        self.state.closest_distance = self.state.lidar_distance
+
+        # 2. Camera can only LOWER distance (safety override)
+        if depth_distance < lidar_distance * 0.7:
+            self.state.closest_distance = depth_distance
+
+        # 3. YOLO semantic hazard triggers IMMEDIATE STOP
+        if self.state.semantic_hazard:
+            self.state.should_stop = True
+```
+
+### Depth Camera Distance Lookup
+
+```python
+def get_depth_distance(self, cx, cy, bbox_width, bbox_height):
+    """Get distance from depth camera at bounding box location."""
+    # Sample inner 50% of bbox (avoid edges)
+    sample_w = int(bbox_width * 0.5)
+    sample_h = int(bbox_height * 0.5)
+
+    # Extract ROI around bbox center
+    roi = depth_img[y1:y2, x1:x2]
+
+    # Filter valid depths and return minimum
+    valid_depths = roi[(roi > 100) & (roi < 10000)]  # 10cm - 10m
+    return float(np.min(valid_depths)) * depth_scale  # mm to meters
+```
+
+### Semantic vs Physical Obstacles
+
+| Obstacle Type | Detection | Stop Distance | Example |
+|---------------|-----------|---------------|---------|
+| Physical | Lidar | 0.15m | Walls, furniture |
+| Low obstacle | Depth camera | 0.15m | Stairs, cables |
+| Semantic | YOLO + Depth | 0.8m | People, pets, bottles |
+
+### Threshold Configuration (Critical)
+
+The fusion node's `hazard_distance` must be **larger** than the explorer's `semantic_stop_distance`:
+
+| Parameter | Location | Value | Purpose |
+|-----------|----------|-------|---------|
+| `hazard_distance` | launch file | 2.5m | Fusion reports hazards within this distance |
+| `semantic_stop_distance` | sensor_fusion.py | 0.8m | Explorer stops for hazards within this distance |
+
+**Why this matters:** If `hazard_distance < semantic_stop_distance`, hazards are filtered out before the explorer sees them, causing the robot to collide with detected objects.
+
+## Timestamped Logging Pattern
+
+All exploration-related output includes timestamps for debugging and log correlation:
+
+### Timestamp Helper Function
+
+```python
+from datetime import datetime
+
+def ts() -> str:
+    """Return timestamp string for log correlation with YOLO logs."""
+    return datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
+```
+
+### Usage in Console Output
+
+```python
+from rich.console import Console
+console = Console()
+
+# Status messages
+console.print(f"{ts()} [red]Obstacle at {distance:.2f}m - stopped[/red]")
+console.print(f"{ts()} [yellow]Starting progressive escape[/yellow]")
+console.print(f"{ts()} [red]HAZARD: {h['type']} at {h['distance']:.2f}m - STOPPING[/red]")
+
+# Plain print for robot scripts
+print(f"{ts()} Status: {remaining:.1f} min remaining | action: {action}")
+print(f"{ts()} [TARS] {message}")
+```
+
+### Output Format
+
+```
+[15:47:52.123] Obstacle at 0.08m - stopped (blocked: 1)
+[15:47:52.456] [TARS] Starting exploration
+[15:48:01.789] HAZARD: bottle at 0.85m - STOPPING
+[15:48:02.012] Status: 4.4 min remaining | action: stopped | escape: NONE
+```
+
+### Log Correlation
+
+Timestamps enable cross-referencing explorer output with YOLO detection logs:
+
+1. Explorer output: `[15:48:01.789] HAZARD: bottle at 0.85m`
+2. YOLO log (Unix): `{"timestamp": 1735760881.789, ...}`
+3. Convert: `date -r 1735760881` → `15:48:01`
+
+Files using this pattern:
+- `validation/exploration/explorer.py`
+- `validation/exploration/sensor_fusion.py`
+- `validation/exploration/escape_handler.py`
+- `robot_explorer.py`
+
+## Hailo Integration Patterns
+
+When working with Hailo-8 accelerated code:
+
+1. **Check hardware first**: Always verify Hailo is available before using
+   ```python
+   try:
+       from hailo_platform import HEF, VDevice
+       HAILO_AVAILABLE = True
+   except ImportError:
+       HAILO_AVAILABLE = False
+   ```
+
+2. **Fallback to CPU**: Provide CPU fallback when Hailo unavailable
+   ```python
+   if HAILO_AVAILABLE and hef_path.exists():
+       # Use Hailo inference
+   else:
+       # Fall back to ultralytics CPU inference
+   ```
+
+3. **Same interface**: Hailo nodes should match CPU node interfaces
+   - Subscribe to same topics
+   - Publish same message types
+   - Use same parameter names
+
+4. **HEF models**: Models must be pre-converted, not converted at runtime
+   - Conversion requires x86_64 with Hailo SDK
+   - HEF files stored in `hailo8-int/models/`
+   - Deployed to `~/landerpi/hailo/models/` on robot
+
+5. **Native installation**: HailoRT runs native (not in Docker)
+   - Requires kernel module (`hailo_pci`)
+   - Device node at `/dev/hailo0`
+   - Python bindings via `pip install hailort`
+
 ## Resources
 
 ### Reference Files
