@@ -111,7 +111,10 @@ uv run python validation/test_cameradepth_ros2.py stream    # Read streams
 uv run python deploy_explorer.py deploy                    # Upload explorer to robot (one time)
 uv run python deploy_explorer.py start --duration 10       # Start exploration (streams output)
 uv run python deploy_explorer.py start --duration 5 --speed 0.35  # Custom speed
+uv run python deploy_explorer.py start --yolo --duration 10       # With YOLO object detection
+uv run python deploy_explorer.py start --yolo --yolo-logging --duration 10  # With YOLO + debug logging (images saved to ~/yolo_logs)
 uv run python deploy_explorer.py start --rosbag --duration 10     # With ROS2 bag recording
+uv run python deploy_explorer.py start --yolo --rosbag --duration 15  # Combined options
 uv run python deploy_explorer.py stop                      # Stop exploration
 uv run python deploy_explorer.py status                    # Check robot status
 uv run python deploy_explorer.py logs                      # View exploration logs
@@ -226,6 +229,163 @@ uv run python deploy_voicecontroller.py test     # Run check on robot
 - `frontier_planner.py` - Frontier detection and goal selection from lidar scans
 - `safety_monitor.py` - Battery monitoring, runtime limits, emergency stop
 - `data_logger.py` - Exploration metrics and optional ROS2 bag recording
+
+**YOLO Mode for Autonomous Exploration**
+
+YOLO mode enables YOLOv11 object detection during autonomous exploration, allowing the robot to identify and avoid semantic hazards (like people, pets, etc.) that lidar alone might not classify as obstacles.
+
+**How it works:**
+1. YOLO detector node subscribes to `/aurora/rgb/image_raw` (depth camera RGB feed)
+2. Runs YOLOv11n inference on each frame to detect objects
+3. Publishes detected hazards to `/hazards` topic (std_msgs/String, JSON format) if within `hazard_distance` (2.5m)
+4. Exploration controller fuses hazards with lidar data for enhanced obstacle avoidance
+5. Semantic hazards within `semantic_stop_distance` (0.8m) trigger immediate stop
+
+**Usage from local machine:**
+```bash
+uv run python deploy_explorer.py start --duration 10 --yolo
+uv run python deploy_explorer.py start --yolo --yolo-logging --duration 10  # With debug logging
+uv run python deploy_explorer.py start --yolo --rosbag --duration 15  # Combined options
+```
+
+**Usage directly on robot:**
+```bash
+python3 ~/landerpi/robot_explorer.py explore --duration 5 --yolo
+```
+
+**Prerequisites:**
+1. ROS2 stack deployed: `uv run python deploy_ros2_stack.py deploy`
+2. Explorer deployed: `uv run python deploy_explorer.py deploy`
+3. Depth camera running (provides RGB feed for YOLO)
+4. YOLOv11 model downloaded on robot (automatic on first run)
+
+**Hazard Configuration (JSON):**
+
+Edit `config/yolo_hazards.json` to add/remove hazard classes without changing code:
+```json
+{
+  "hazard_classes": ["person", "dog", "cat", "cup", "bottle", "stop sign"],
+  "hazard_distance": 2.5,
+  "semantic_stop_distance": 0.8
+}
+```
+
+After editing, redeploy: `uv run python deploy_ros2_stack.py deploy`
+
+**Key thresholds:**
+| Parameter | Value | Location |
+|-----------|-------|----------|
+| `hazard_distance` | 2.5m | `config/yolo_hazards.json` |
+| `semantic_stop_distance` | 0.8m | `config/yolo_hazards.json` |
+
+**Note:** `hazard_distance` (2.5m) > `semantic_stop_distance` (0.8m) ensures hazards are reported before the robot stops.
+
+**Camera Health Monitoring:**
+
+When running with `--yolo`, the explorer monitors camera health every 30 seconds:
+- Warns if camera stops publishing (Aurora 930 can crash during extended operation)
+- Reports camera recovery with publish rate
+- TTS announcements: "Warning: Camera offline" / "Camera recovered"
+
+Example output:
+```
+[12:34:56.789] [WARNING] Camera stopped publishing! YOLO detection disabled.
+[12:35:26.123] [INFO] Camera recovered (9.8 Hz)
+```
+
+**YOLO Debug Logging:**
+
+When `--yolo-logging` is enabled, the YOLO node saves annotated images and detection history.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_logging` | false | Save annotated images |
+| `log_dir` | ~/yolo_logs | Output directory |
+| `log_all_frames` | false | Log all frames vs only detections |
+| `max_log_images` | 500 | Auto-cleanup threshold |
+
+**Log Output Structure:**
+```
+~/yolo_logs/session_YYYYMMDD_HHMMSS/
+├── metadata.json           # Session config
+├── detections.jsonl        # All detections with timestamps
+└── images/
+    └── frame_000001_*_det.jpg  # Annotated images with bboxes
+```
+
+**Usage:**
+```bash
+# View logged detections:
+ssh tonbost@192.168.50.169 "ls ~/yolo_logs/"
+ssh tonbost@192.168.50.169 "tail -10 ~/yolo_logs/session_*/detections.jsonl"
+
+# Copy images locally:
+scp -r tonbost@192.168.50.169:~/yolo_logs/session_* ./yolo_debug/
+```
+
+**Note:** Enabling YOLO logging restarts ROS2 stack (adds ~8 second delay at start)
+
+**Timestamped Explorer Output:**
+
+Explorer output includes timestamps `[HH:MM:SS.mmm]` for cross-referencing with YOLO logs:
+```
+[15:47:52.123] Obstacle at 0.08m - stopped (blocked: 1)
+[15:48:01.789] HAZARD: bottle at 0.85m - STOPPING
+[15:48:02.012] Status: 4.4 min remaining | action: stopped
+```
+
+Correlate with YOLO detections by converting Unix timestamps in `detections.jsonl`.
+
+**Architecture:**
+```
+/aurora/rgb/image_raw → YOLO detector → /hazards (JSON)
+                                            ↓
+/scan (lidar) → Exploration controller ← hazard fusion
+                        ↓
+                  /cmd_vel (motion)
+```
+
+## Hailo 8 AI Accelerator
+
+The robot has a Hailo-8 NPU on PCIe for hardware-accelerated inference.
+
+**Setup:**
+```bash
+# Check hardware status
+uv run python deploy_hailo8.py check
+
+# Install driver (one-time)
+uv run python deploy_hailo8.py install
+
+# Deploy models and node
+uv run python deploy_hailo8.py deploy
+
+# Validate
+uv run python deploy_hailo8.py test --benchmark
+
+# Show device info
+uv run python deploy_hailo8.py status
+```
+
+**Performance:**
+| Backend | Model | FPS | Latency |
+|---------|-------|-----|---------|
+| CPU (Pi5) | YOLOv11n | 2-5 | 200-500ms |
+| Hailo-8 | YOLOv11n | 25-40 | 25-40ms |
+
+**Model Conversion:**
+Models must be converted to HEF format on x86_64 (Docker):
+```bash
+cd hailo8-int/conversion
+docker build -t hailo-converter .
+docker run -v $(pwd):/workspace hailo-converter python convert_yolo.py \
+    --input yolo11n.onnx --output yolo11n_hailo.hef
+```
+
+See `hailo8-int/docs/` for detailed documentation:
+- `INSTALLATION.md` - Driver setup guide
+- `MODEL_CONVERSION.md` - ONNX to HEF conversion
+- `TROUBLESHOOTING.md` - Common issues and fixes
 
 **`ros2_nodes/arm_controller/`** - ROS2 arm controller node
 - Subscribes to `/arm/cmd` (JSON commands)
