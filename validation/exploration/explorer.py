@@ -3,11 +3,14 @@
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, List, Optional, Tuple
 
 from rich.console import Console
 
 from .safety_monitor import SafetyMonitor, SafetyConfig
+
+
 from .frontier_planner import FrontierPlanner, FrontierConfig
 from .sensor_fusion import SensorFusion, SensorConfig
 from .data_logger import DataLogger, LogConfig
@@ -28,6 +31,11 @@ class LoggerProtocol(Protocol):
     def end_session(self, summary: dict | None = None) -> dict: ...
 
 console = Console()
+
+
+def ts() -> str:
+    """Return timestamp string for log correlation with YOLO logs."""
+    return datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
 
 
 @dataclass
@@ -203,12 +211,12 @@ class ExplorationController:
             self.current_action = "stopped"
             self.forward_blocked_count += 1
             self.logger.log_event("obstacle_stop", {"distance": obstacle.closest_distance})
-            console.print(f"[red]Obstacle at {obstacle.closest_distance:.2f}m - stopped (blocked: {self.forward_blocked_count})[/red]")
+            console.print(f"{ts()} [red]Obstacle at {obstacle.closest_distance:.2f}m - stopped (blocked: {self.forward_blocked_count})[/red]")
 
             # Check if we're already in escape mode
             if self.escape_handler.escape_in_progress:
                 # Already escaping but hit obstacle again → ESCALATE
-                console.print("[yellow]Blocked again while escaping - escalating[/yellow]")
+                console.print(f"{ts()} [yellow]Blocked again while escaping - escalating[/yellow]")
                 self._handle_escape_escalation()
             elif self._should_escape():
                 # Not in escape mode, trigger new escape
@@ -357,7 +365,7 @@ class ExplorationController:
         if self.escape_handler.escape_in_progress:
             return
 
-        console.print("[bold yellow]Starting progressive escape[/bold yellow]")
+        console.print(f"{ts()} [bold yellow]Starting progressive escape[/bold yellow]")
         self.logger.log_event("escape_start", {
             "oscillating": self._is_oscillating(),
             "blocked_count": self.forward_blocked_count,

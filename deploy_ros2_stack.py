@@ -68,6 +68,9 @@ def deploy(
         # Create remote directories
         console.print("\n[bold]Creating directories...[/bold]")
         conn.run("mkdir -p ~/landerpi/{ros2_nodes,docker,config,drivers}")
+        # Create sensor bridge data directory (shared with Docker container)
+        conn.run("mkdir -p ~/landerpi_data")
+        console.print("  [dim]Created ~/landerpi_data for sensor bridge[/dim]")
 
         # Upload ros2_nodes
         console.print("\n[bold]Uploading ros2_nodes/...[/bold]")
@@ -91,9 +94,10 @@ def deploy(
         )
 
         if start:
-            console.print("\n[bold]Starting ROS2 stack...[/bold]")
+            console.print("\n[bold]Restarting ROS2 stack...[/bold]")
+            # --force-recreate ensures container restarts with new config
             result = conn.run(
-                "cd ~/landerpi/docker && docker compose up -d --build",
+                "cd ~/landerpi/docker && docker compose up -d --build --force-recreate",
                 warn=True
             )
             if result.ok:
@@ -148,6 +152,75 @@ def logs(
         if follow:
             cmd += " -f"
         conn.run(cmd)
+
+
+@app.command()
+def rebuild(
+    host: str = typer.Option(None),
+    user: str = typer.Option(None),
+    password: str = typer.Option(None),
+):
+    """Rebuild Docker image from scratch (includes Hailo support)."""
+    config = get_config()
+    host = host or config.get("host")
+    user = user or config.get("user")
+    password = password or config.get("password")
+
+    if not all([host, user, password]):
+        console.print("[red]Missing connection details.[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"Rebuilding Docker image on {host}\n\n"
+        "This will:\n"
+        "1. Stop current stack\n"
+        "2. Upload latest Dockerfile\n"
+        "3. Rebuild image with Hailo support\n"
+        "4. Start stack\n\n"
+        "[yellow]This takes 5-10 minutes[/yellow]",
+        title="Docker Rebuild"
+    ))
+
+    base_path = Path(__file__).parent
+
+    with Connection(host, user=user, connect_kwargs={"password": password}) as conn:
+        result = conn.run("echo $HOME", hide=True)
+        home_dir = result.stdout.strip()
+
+        # Stop current stack
+        console.print("\n[bold]Stopping current stack...[/bold]")
+        conn.run("cd ~/landerpi/docker && docker compose down", warn=True)
+
+        # Upload docker directory (includes new Dockerfile)
+        console.print("\n[bold]Uploading docker/...[/bold]")
+        upload_directory(conn, base_path / "docker", "~/landerpi/docker", home_dir)
+
+        # Rebuild image with no cache
+        console.print("\n[bold]Building Docker image (this takes a while)...[/bold]")
+        result = conn.run(
+            "cd ~/landerpi/docker && docker compose build --no-cache",
+            warn=True
+        )
+
+        if not result.ok:
+            console.print("[red]Build failed! Check output above.[/red]")
+            raise typer.Exit(1)
+
+        console.print("[green]Image built successfully![/green]")
+
+        # Start stack
+        console.print("\n[bold]Starting stack...[/bold]")
+        result = conn.run(
+            "cd ~/landerpi/docker && docker compose up -d",
+            warn=True
+        )
+
+        if result.ok:
+            console.print("[green]Stack started![/green]")
+            console.print("\nTest Hailo with:")
+            console.print("  uv run python deploy_explorer.py start --yolo-hailo --duration 2")
+        else:
+            console.print("[red]Failed to start stack[/red]")
 
 
 if __name__ == "__main__":

@@ -15,9 +15,34 @@ Usage (on robot):
 
 import argparse
 import signal
+import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+
+
+def get_cpu_temp() -> str:
+    """Get CPU temperature as string."""
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"],
+            capture_output=True, text=True, timeout=1
+        )
+        if result.returncode == 0:
+            # Parse "temp=45.0'C" -> "45"
+            temp = result.stdout.strip().split("=")[1].split("'")[0]
+            return f"{float(temp):.0f}"
+    except Exception:
+        pass
+    return "?"
+
+
+def ts() -> str:
+    """Return timestamp string with temperature for log correlation."""
+    timestamp = datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
+    temp = get_cpu_temp()
+    return f"{timestamp}[{temp}°C]"
 
 # Add exploration module to path (deployed to ~/landerpi/exploration/)
 EXPLORATION_PATH = Path.home() / "landerpi" / "exploration"
@@ -138,7 +163,7 @@ class RobotExplorer:
 
     def _speak(self, message: str):
         """Output a message (could be TTS in future)."""
-        print(f"[TARS] {message}")
+        print(f"{ts()} [TARS] {message}")
 
     def start(self):
         """Start exploration."""
@@ -168,6 +193,7 @@ class RobotExplorer:
         loop_rate = self.controller.config.loop_rate_hz
         loop_period = 1.0 / loop_rate
         last_status = time.time()
+        camera_was_healthy = True  # Track camera health for warnings
 
         while self.controller.running:
             loop_start = time.time()
@@ -180,7 +206,6 @@ class RobotExplorer:
             hazards = []
             if self.enable_yolo:
                 hazards = self.hardware.read_hazards()
-
 
             # Update controller with sensor data
             if ranges:
@@ -200,14 +225,27 @@ class RobotExplorer:
             if not self.controller.step():
                 break
 
-            # Status update every 30s
-            if time.time() - last_status >= 30:
+            # Status update every 5s
+            if time.time() - last_status >= 5:
                 last_status = time.time()
                 status = self.controller.get_status()
                 remaining = status["safety"]["remaining_minutes"]
                 action = status["action"]
                 escape_level = status["escape"]["level"]
-                print(f"Status: {remaining:.1f} min remaining | action: {action} | escape: {escape_level}")
+
+                # Check camera health if YOLO enabled
+                if self.enable_yolo:
+                    camera_healthy, camera_rate = self.hardware.check_camera_health()
+                    camera_status = f"cam: {'OK' if camera_healthy else 'OFFLINE'} ({camera_rate:.1f}Hz)"
+                    if camera_was_healthy and not camera_healthy:
+                        print(f"{ts()} [WARNING] Camera stopped publishing!")
+                    elif not camera_was_healthy and camera_healthy:
+                        print(f"{ts()} [INFO] Camera recovered ({camera_rate:.1f} Hz)")
+                    camera_was_healthy = camera_healthy
+                else:
+                    camera_status = ""
+
+                print(f"{ts()} Status: {remaining:.1f} min | {action} | escape: {escape_level} {camera_status}")
 
             # Rate limiting
             elapsed = time.time() - loop_start
@@ -217,7 +255,7 @@ class RobotExplorer:
     def stop(self, reason: str = "Manual stop"):
         """Stop exploration."""
         self.controller.stop_exploration(reason)
-        print(f"Stopped: {reason}")
+        print(f"{ts()} Stopped: {reason}")
 
 
 def cmd_explore(args):

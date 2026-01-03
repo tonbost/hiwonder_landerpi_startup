@@ -34,7 +34,8 @@ Load credentials from `config.json` in the project root:
 | Voice Deploy | `uv run python deploy_voicecontroller.py deploy` | Deploy TARS voice control |
 | Voice Test | `uv run python deploy_voicecontroller.py test` | Test voice components |
 | Hailo Check | `uv run python deploy_hailo8.py check` | Hailo hardware/driver status |
-| Hailo Install | `uv run python deploy_hailo8.py install` | Install HailoRT driver |
+| Hailo Install | `uv run python deploy_hailo8.py install` | Install HailoRT 4.23 driver |
+| Hailo Install (Force) | `uv run python deploy_hailo8.py install --force` | Force reinstall HailoRT |
 | Hailo Deploy | `uv run python deploy_hailo8.py deploy` | Upload models and ROS2 node |
 | Hailo Test | `uv run python deploy_hailo8.py test` | Run validation test |
 | Hailo Status | `uv run python deploy_hailo8.py status` | Show device info |
@@ -56,14 +57,14 @@ A properly configured LanderPi should have:
 
 | Component | Expected | Check Command |
 |-----------|----------|---------------|
-| OS | Ubuntu 22.04/24.04 | `cat /etc/os-release` |
+| OS | Ubuntu 22.04/24.04/25.10 | `cat /etc/os-release` |
 | Docker | Installed with `landerpi-ros2:latest` image | `docker images` |
 | ROS2 | Available via Docker | `docker run --rm landerpi-ros2:latest ros2 topic list` |
 | Motor controller | `/dev/ttyACM0` | `ls /dev/ttyACM*` |
 | Lidar device | `/dev/ttyUSB0` or `/dev/ttyUSB1` | `ls /dev/ttyUSB*` |
 | I2C | `/dev/i2c-1` | `ls /dev/i2c*` |
 | Motor SDK | `~/ros_robot_controller/ros_robot_controller_sdk.py` | `ls ~/ros_robot_controller/` |
-| Hailo-8 (optional) | `/dev/hailo0` if installed | `lspci \| grep -i hailo` |
+| Hailo-8 (optional) | `/dev/hailo0`, HailoRT 4.23.0 | `hailortcli --version` |
 
 ## Docker Configuration
 
@@ -208,3 +209,42 @@ All `*_ros2.py` test scripts follow this pattern:
 |-------------|-------------|
 | `test_*.py` (direct) | Quick testing, debugging, offline recovery |
 | `test_*_ros2.py` | Production, nav2/SLAM integration |
+
+## ROS2 Topic Reading Best Practices
+
+### Problem: `head -1` fails with ros2 topic hz
+
+When checking topic publish rates, `ros2 topic hz` outputs to stderr, not stdout. Using `head -1` on stdout fails:
+
+```bash
+# FAILS - ros2 topic hz writes to stderr
+docker exec landerpi-ros2 bash -c 'ros2 topic hz /aurora/rgb/image_raw' | head -1
+
+# WORKS - redirect stderr to stdout first
+docker exec landerpi-ros2 bash -c 'ros2 topic hz /aurora/rgb/image_raw 2>&1' | grep -m 1 "average rate"
+```
+
+**Implementation in ros2_hardware.py:**
+```python
+def check_camera_health(self) -> Tuple[bool, float]:
+    """Check if camera is publishing at expected rate."""
+    cmd = (
+        f'{DOCKER_EXEC} "{ROS_SOURCE} timeout 3 ros2 topic hz /aurora/rgb/image_raw 2>&1" '
+        f'| grep -m 1 "average rate"'
+    )
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5.0)
+    # Parse "average rate: 9.876" from output
+```
+
+### Problem: ros2 topic echo initialization overhead
+
+`ros2 topic echo` creates a new ROS2 node each invocation, taking **300-500ms** to initialize. This blocks control loops.
+
+**Solution:** Use caching for non-critical data:
+```python
+# Cache hazards for 0.5s to avoid blocking control loop
+if time.time() - self._last_hazard_time < 0.5:
+    return self._cached_hazards
+```
+
+See `landerpi-dev` skill for detailed caching patterns.

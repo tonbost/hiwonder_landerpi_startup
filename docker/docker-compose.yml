@@ -1,8 +1,12 @@
 # LanderPi ROS2 Stack
 # Persists across reboots with restart: unless-stopped
+# Rebuild image with: docker compose build --no-cache
 
 services:
   ros2-stack:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: landerpi-ros2:latest
     container_name: landerpi-ros2
     restart: unless-stopped
@@ -13,8 +17,11 @@ services:
       - /dev/ttyAMA0:/dev/ttyAMA0    # Motor controller
       - /dev/ttyUSB0:/dev/ttyUSB0    # Lidar (primary)
       - /dev/ttyUSB1:/dev/ttyUSB1    # Lidar (fallback)
+      - /dev/hailo0:/dev/hailo0      # Hailo-8 NPU (optional)
 
     volumes:
+      # Shared data directory for sensor bridge (writable)
+      - ~/landerpi_data:/landerpi_data
       # Custom nodes (read-only)
       - ../ros2_nodes/cmd_vel_bridge:/ros2_ws/src/cmd_vel_bridge:ro
       - ../ros2_nodes/arm_controller:/ros2_ws/src/arm_controller:ro
@@ -23,6 +30,9 @@ services:
       - ../ros2_nodes/depth_stats:/ros2_ws/src/depth_stats:ro
       - ../ros2_nodes/yolo_detector:/ros2_ws/src/yolo_detector:ro
       - ../ros2_nodes/obstacle_fusion:/ros2_ws/src/obstacle_fusion:ro
+      - ../ros2_nodes/sensor_bridge:/ros2_ws/src/sensor_bridge:ro
+      # Hailo bridge (connects to host inference server via ZeroMQ)
+      - ../ros2_nodes/yolo_hailo_bridge:/ros2_ws/src/yolo_hailo_bridge:ro
       # Vendor drivers (read-only) - never modified
       - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller:/ros2_ws/src/ros_robot_controller:ro
       - ../drivers/ros_robot_controller-ros2/src/ros_robot_controller_msgs:/ros2_ws/src/ros_robot_controller_msgs:ro
@@ -30,6 +40,8 @@ services:
       - ~/deptrum_ws:/deptrum_ws:ro
       # Config (read-only)
       - ../config:/ros2_ws/config:ro
+      # YOLO debug logs (writable, mapped to host)
+      - ~/yolo_logs:/yolo_logs
       # Build artifacts (persistent)
       - ros2_build:/ros2_ws/build
       - ros2_install:/ros2_ws/install
@@ -38,6 +50,8 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - YOLO_LOGGING=${YOLO_LOGGING:-false}
+      - USE_HAILO=${USE_HAILO:-false}
 
     command: >
       bash -c "
@@ -48,8 +62,17 @@ services:
         echo '=== Installing pyserial for lidar driver ==='
         pip3 install -q pyserial 2>/dev/null || true
 
+        # Build base packages
+        PACKAGES='ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge arm_controller lidar_driver battery_monitor depth_stats yolo_detector obstacle_fusion sensor_bridge'
+
+        # Add Hailo bridge package if available and requested
+        if [ \"$$USE_HAILO\" = 'true' ] && [ -d /ros2_ws/src/yolo_hailo_bridge ]; then
+          echo '=== Hailo bridge mode enabled (connects to host server) ==='
+          PACKAGES=\"$$PACKAGES yolo_hailo_bridge\"
+        fi
+
         echo '=== Building ROS2 packages ==='
-        colcon build --symlink-install --packages-select ros_robot_controller_msgs ros_robot_controller cmd_vel_bridge arm_controller lidar_driver battery_monitor depth_stats yolo_detector obstacle_fusion
+        colcon build --symlink-install --packages-select $$PACKAGES
 
         source install/setup.bash
 
@@ -60,7 +83,8 @@ services:
         fi
 
         echo '=== Starting LanderPi ROS2 stack ==='
-        ros2 launch cmd_vel_bridge landerpi.launch.py
+        echo \"YOLO_LOGGING=$$YOLO_LOGGING USE_HAILO=$$USE_HAILO\"
+        ros2 launch cmd_vel_bridge landerpi.launch.py enable_yolo_logging:=$$YOLO_LOGGING use_hailo:=$$USE_HAILO
       "
 
 volumes:

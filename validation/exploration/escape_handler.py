@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
 
@@ -11,6 +12,11 @@ if TYPE_CHECKING:
     from .arm_scanner import ArmScanner
 
 console = Console()
+
+
+def ts() -> str:
+    """Return timestamp string for log correlation with YOLO logs."""
+    return datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
 
 
 class EscapeLevel(Enum):
@@ -121,7 +127,7 @@ class EscapeHandler:
         self.level = EscapeLevel(self.level.value + 1)
         self.level_start_time = time.time()
 
-        console.print(f"[yellow]Escalating to {self.level.name}[/yellow]")
+        console.print(f"{ts()} [yellow]Escalating to {self.level.name}[/yellow]")
         return self._execute_current_level()
 
     def _execute_current_level(self) -> EscapeResult:
@@ -139,7 +145,7 @@ class EscapeHandler:
 
     def _execute_wide_turn(self) -> EscapeResult:
         """Level 1: BACKUP first, then turn 90° toward more open side using arm glance."""
-        console.print("[yellow]Level 1: Wide turn with arm glance[/yellow]")
+        console.print(f"{ts()} [yellow]Level 1: Wide turn with arm glance[/yellow]")
         self.speak("Looking for escape route")
 
         # BACKUP FIRST - critical when close to obstacle
@@ -178,7 +184,7 @@ class EscapeHandler:
 
     def _execute_reverse_180(self) -> EscapeResult:
         """Level 2: Back up and turn 180°."""
-        console.print("[yellow]Level 2: Reverse and turn 180[/yellow]")
+        console.print(f"{ts()} [yellow]Level 2: Reverse and turn 180[/yellow]")
         self.speak("Backing up")
 
         # Back up - use continuous motion if available (watchdog-safe)
@@ -199,7 +205,7 @@ class EscapeHandler:
 
     def _execute_full_scan(self) -> EscapeResult:
         """Level 3: Full scan with arm sweep, then 360° chassis rotation with camera."""
-        console.print("[yellow]Level 3: Full scan[/yellow]")
+        console.print(f"{ts()} [yellow]Level 3: Full scan[/yellow]")
         self.speak("Scanning for escape")
 
         # First backup to get some clearance - use continuous motion if available (watchdog-safe)
@@ -268,7 +274,7 @@ class EscapeHandler:
 
     def _handle_trapped(self) -> EscapeResult:
         """Level 4: Give up, wait for help."""
-        console.print("[bold red]Level 4: Trapped - waiting for help[/bold red]")
+        console.print(f"{ts()} [bold red]Level 4: Trapped - waiting for help[/bold red]")
         self.speak("I'm trapped. Please help me.")
         self.stop()
 
@@ -284,7 +290,7 @@ class EscapeHandler:
         self.level = EscapeLevel.NONE
         self.escape_in_progress = False
         self.last_escape_time = time.time()
-        console.print("[green]Escape successful, resetting[/green]")
+        console.print(f"{ts()} [green]Escape successful, resetting[/green]")
 
     def abort(self) -> None:
         """Abort current escape attempt."""

@@ -1,13 +1,13 @@
 # Hailo 8 Installation Guide
 
-This guide covers installing the HailoRT driver stack on Raspberry Pi 5 with Hailo-8 AI accelerator.
+This guide covers installing the HailoRT 4.23 driver stack on Raspberry Pi 5 with Hailo-8 AI accelerator.
 
 ## Prerequisites
 
 Before starting, ensure you have:
 
 - **Raspberry Pi 5** with Hailo-8 module installed on PCIe slot
-- **Ubuntu 22.04 or 24.04** (other Linux distributions may work but are untested)
+- **Ubuntu 22.04, 24.04, or 25.10** (uses Raspberry Pi Trixie APT repository)
 - **Internet connection** for downloading packages
 - **SSH access** to the robot configured in `config.json`
 
@@ -15,6 +15,23 @@ Hardware requirements:
 - Hailo-8 module properly seated in PCIe slot
 - PCIe enabled in boot configuration
 - Adequate cooling (Hailo-8 generates heat during inference)
+
+## Important Notes
+
+### HailoRT 4.23 Release (January 2025)
+This installer uses **HailoRT 4.23** from the Raspberry Pi **Trixie** repository. Key improvements:
+- **Python 3.13 support** - Python bindings now work on Ubuntu 25.10
+- Improved DKMS compatibility with modern kernels
+- Better stability and error handling
+
+### Repository
+Uses the **Raspberry Pi Trixie APT repository** (`archive.raspberrypi.com/debian/ trixie main`).
+
+### Firmware Version
+M.2 Hailo-8 modules have firmware 4.19.0 which is not field-upgradeable. This is normal - the 4.23 runtime works correctly with 4.19.0 firmware (you'll see a warning message, but inference works fine).
+
+### TAPPAS Core
+The full `hailo-all` metapackage and `hailo-tappas-core` have Raspberry Pi OS specific dependencies that don't work on Ubuntu. The core HailoRT packages (hailort, hailort-pcie-driver, python3-hailort) work perfectly.
 
 ## Automated Installation (Recommended)
 
@@ -41,7 +58,7 @@ Hardware detected. Run 'deploy_hailo8.py install' to set up driver.
 
 If PCIe device is not detected, see [Troubleshooting](#troubleshooting) section.
 
-### Step 2: Install HailoRT Driver
+### Step 2: Install HailoRT 4.23 Driver
 
 Run the automated installation:
 
@@ -50,11 +67,14 @@ uv run python deploy_hailo8.py install
 ```
 
 The script performs these steps:
-1. Adds Hailo APT repository with GPG key
-2. Installs `hailort` package (runtime and CLI tools)
-3. Installs `hailort-dkms` package (kernel driver)
-4. Loads `hailo_pci` kernel module
-5. Installs Python bindings via pip
+1. Adds Raspberry Pi Trixie APT repository with GPG key
+2. Installs DKMS (required before Hailo packages)
+3. Installs kernel headers matching your running kernel
+4. Removes any old Hailo packages
+5. Installs `hailort` 4.23.0 (runtime and CLI tools)
+6. Installs `hailort-pcie-driver` (kernel driver with DKMS)
+7. Loads `hailo_pci` kernel module
+8. Installs `python3-hailort` (Python API)
 
 The installation is **idempotent** - you can safely re-run it if interrupted.
 
@@ -88,10 +108,10 @@ uv run python deploy_hailo8.py check
 Expected output when installation is successful:
 ```
 PCIe Device:     ✓ 01:00.0 Co-processor: Hailo Technologies Ltd. Hailo-8 AI Processor
-Device Node:     ✓ crw-rw---- 1 root hailo 248, 0 Jan  1 12:00 /dev/hailo0
-Kernel Module:   ✓ hailo_pci 131072 0
-HailoRT CLI:     ✓ hailortcli 4.18.0
-Python Bindings: ✓ hailo_platform 4.18.0
+Device Node:     ✓ crw-rw-rw- 1 root root 510, 0 Jan  2 12:00 /dev/hailo0
+Kernel Module:   ✓ hailo_pci 118784 0
+HailoRT CLI:     ✓ HailoRT-CLI version 4.23.0
+Python Bindings: ✓ hailo_platform 4.23.0
 
 Summary:
   PCIe Device      OK
@@ -116,40 +136,63 @@ This shows:
 - Firmware version and build date
 - Device temperature (if available)
 
+Note: You may see a warning about firmware version mismatch - this is normal for M.2 modules.
+
 ## Manual Installation
 
 If automated installation fails or you prefer manual control, follow these steps directly on the robot.
 
-### 1. Add Hailo APT Repository
+### 1. Add Raspberry Pi Trixie Repository
 
-SSH to the robot and add the Hailo repository:
+SSH to the robot and add the Raspberry Pi repository:
 
 ```bash
 # Download and install GPG key
-wget -qO - https://hailo.ai/keys/hailo-public.gpg | \
-    sudo gpg --dearmor -o /usr/share/keyrings/hailo-archive-keyring.gpg
+curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key | \
+    sudo gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg
 
-# Add repository to sources list
-echo "deb [arch=arm64 signed-by=/usr/share/keyrings/hailo-archive-keyring.gpg] https://hailo.ai/raspberry-pi/ stable main" | \
-    sudo tee /etc/apt/sources.list.d/hailo.list
+# Add Trixie repository (has HailoRT 4.23)
+echo "deb [arch=arm64 signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ trixie main" | \
+    sudo tee /etc/apt/sources.list.d/raspi.list
 ```
 
-### 2. Install HailoRT Packages
+### 2. Install Prerequisites
 
-Update package lists and install HailoRT:
+Install DKMS and kernel headers:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y hailort hailort-dkms
+
+# IMPORTANT: Install DKMS first (before Hailo packages)
+sudo apt-get install -y dkms
+
+# Install kernel headers
+KERNEL_VERSION=$(uname -r)
+echo "Running kernel: $KERNEL_VERSION"
+sudo apt-get install -y "linux-headers-$KERNEL_VERSION"
+```
+
+### 3. Install HailoRT 4.23 Packages
+
+```bash
+# Install HailoRT runtime
+sudo apt-get install -y hailort=4.23.0
+
+# Install PCIe driver (includes DKMS module)
+sudo apt-get install -y hailort-pcie-driver
+
+# Install Python bindings
+sudo apt-get install -y python3-hailort
 ```
 
 Package details:
 - `hailort` - Runtime libraries and CLI tools (hailortcli)
-- `hailort-dkms` - Kernel driver with DKMS for automatic rebuilds
+- `hailort-pcie-driver` - Kernel driver with DKMS for automatic rebuilds
+- `python3-hailort` - Python API bindings
 
-Installation takes 2-5 minutes depending on internet speed.
+Installation takes 2-5 minutes depending on internet speed and DKMS compilation.
 
-### 3. Load Kernel Module
+### 4. Load Kernel Module
 
 Load the Hailo PCIe kernel module:
 
@@ -165,7 +208,7 @@ ls -la /dev/hailo0
 
 Expected output:
 ```
-crw-rw---- 1 root hailo 248, 0 Jan  1 12:00 /dev/hailo0
+crw-rw-rw- 1 root root 510, 0 Jan  2 12:00 /dev/hailo0
 ```
 
 If `/dev/hailo0` does not exist, reboot the system:
@@ -174,14 +217,7 @@ If `/dev/hailo0` does not exist, reboot the system:
 sudo reboot
 ```
 
-After reboot, verify again:
-
-```bash
-ls -la /dev/hailo0
-lsmod | grep hailo
-```
-
-### 4. Verify HailoRT Installation
+### 5. Verify Installation
 
 Test the HailoRT CLI:
 
@@ -192,12 +228,8 @@ hailortcli scan
 
 Expected output from `hailortcli scan`:
 ```
-Scanning for Hailo devices...
-Device 0: Hailo-8
-  PCIe BDF: 0000:01:00.0
-  Device Architecture: HAILO8
-  Firmware Version: 4.18.0
-  Control Protocol Version: 2
+Hailo Devices:
+[-] Device: 0001:01:00.0
 ```
 
 Get detailed device information:
@@ -206,15 +238,7 @@ Get detailed device information:
 hailortcli fw-control identify
 ```
 
-### 5. Install Python Bindings
-
-Install the Python bindings for programmatic access:
-
-```bash
-pip install hailort --break-system-packages
-```
-
-Note: `--break-system-packages` is required on Ubuntu 23.04+ with PEP 668 enforcement.
+Note: You may see a warning about firmware version mismatch - this is expected for M.2 modules.
 
 Verify Python import:
 
@@ -224,62 +248,15 @@ python3 -c "import hailo_platform; print(hailo_platform.__version__)"
 
 Expected output:
 ```
-4.18.0
+4.23.0
 ```
 
-### 6. Configure User Permissions (Optional)
+## Performance
 
-To run Hailo applications without sudo, add your user to the `hailo` group:
-
-```bash
-sudo usermod -aG hailo $USER
-```
-
-**Important:** Logout and login (or reboot) for group changes to take effect.
-
-Verify group membership:
-
-```bash
-groups | grep hailo
-```
-
-## Verification
-
-After installation (automated or manual), verify all components:
-
-### Quick Check
-
-```bash
-# From local machine
-uv run python deploy_hailo8.py check
-
-# Or directly on robot
-hailortcli scan
-python3 -c "import hailo_platform; print('OK')"
-```
-
-### Detailed Status
-
-```bash
-uv run python deploy_hailo8.py status
-```
-
-This shows:
-- Device scan (board type, firmware version)
-- Firmware control info (core clock, temperature)
-- Device health status
-
-### Expected Results
-
-All checks should show ✓ (green checkmark):
-
-| Component | Status | Command to Verify |
-|-----------|--------|-------------------|
-| PCIe Device | ✓ | `lspci \| grep -i hailo` |
-| Device Node | ✓ | `ls /dev/hailo0` |
-| Kernel Module | ✓ | `lsmod \| grep hailo` |
-| HailoRT CLI | ✓ | `hailortcli --version` |
-| Python Bindings | ✓ | `python3 -c "import hailo_platform"` |
+| Backend | Model | FPS | Latency |
+|---------|-------|-----|---------|
+| CPU (Pi5) | YOLOv11n | 2-5 | 200-500ms |
+| Hailo-8 | YOLOv11n | 25-40 | 25-40ms |
 
 ## Next Steps
 
@@ -333,17 +310,13 @@ ls: cannot access '/dev/hailo*': No such file or directory
    ```
 2. **Check DKMS status**:
    ```bash
-   dkms status | grep hailort
+   dkms status | grep hailo
    ```
-   Expected: `hailort/<version>, <kernel>, arm64: installed`
+   Expected: `hailo_pci/4.23.0, <kernel>, arm64: installed`
 
 3. **Rebuild DKMS module** if status shows errors:
    ```bash
-   # Get HailoRT version
-   hailortcli --version
-
-   # Rebuild for current kernel
-   sudo dkms install hailort/<version>
+   sudo dkms install hailo_pci/4.23.0
    ```
 4. **Reboot** to ensure module loads at boot:
    ```bash
@@ -352,35 +325,6 @@ ls: cannot access '/dev/hailo*': No such file or directory
 5. **Check kernel logs** for errors:
    ```bash
    dmesg | grep -i hailo
-   ```
-
-### Kernel Module Won't Load
-
-**Symptoms:**
-```
-sudo modprobe hailo_pci
-modprobe: ERROR: could not insert 'hailo_pci': Operation not permitted
-```
-
-**Solutions:**
-
-1. **Check kernel version compatibility**:
-   ```bash
-   uname -r
-   dkms status
-   ```
-2. **Ensure DKMS module is built** for your kernel:
-   ```bash
-   sudo dkms autoinstall
-   ```
-3. **Check for Secure Boot** (must be disabled):
-   ```bash
-   mokutil --sb-state
-   ```
-   If Secure Boot is enabled, disable in UEFI/BIOS settings
-4. **Review kernel logs**:
-   ```bash
-   sudo dmesg | tail -50
    ```
 
 ### Permission Denied on /dev/hailo0
@@ -402,15 +346,6 @@ Error: Failed to open device: Permission denied
    ```bash
    sudo hailortcli scan
    ```
-4. **Verify group membership**:
-   ```bash
-   groups | grep hailo
-   ```
-5. **Check device permissions**:
-   ```bash
-   ls -la /dev/hailo0
-   ```
-   Expected: `crw-rw---- 1 root hailo ...`
 
 ### Python Import Fails
 
@@ -424,102 +359,45 @@ ModuleNotFoundError: No module named 'hailo_platform'
 
 1. **Install Python bindings**:
    ```bash
-   pip install hailort --break-system-packages
+   sudo apt-get install -y python3-hailort
    ```
-2. **Check Python version** (requires 3.8+):
+2. **Check Python version** (4.23 supports 3.8-3.13):
    ```bash
    python3 --version
    ```
 3. **Verify installation**:
    ```bash
-   pip list | grep hailort
-   ```
-4. **Check you're using system Python**, not a venv:
-   ```bash
-   which python3
+   pip3 list | grep hailort
    ```
 
-### hailortcli Not Found
+### Firmware Version Warning
 
 **Symptoms:**
 ```
-bash: hailortcli: command not found
+[HailoRT] [warning] Unsupported firmware operation. Host: 4.23.0, Device: 4.19.0
 ```
 
-**Solutions:**
+**Solution:**
+This is **normal** for M.2 Hailo-8 modules. The firmware is not field-upgradeable, but the 4.23 runtime works correctly with 4.19 firmware. Inference works fine - the warning is cosmetic.
 
-1. **Reinstall hailort package**:
-   ```bash
-   sudo apt-get install --reinstall hailort
-   ```
-2. **Check PATH**:
-   ```bash
-   echo $PATH | grep -o '/usr/bin'
-   which hailortcli
-   ```
-3. **Verify package installation**:
-   ```bash
-   dpkg -l | grep hailort
-   ```
+## Optional: hailo-apps-infra
 
-### Installation Hangs During apt-get
+For additional ML tools and applications, you can install hailo-apps-infra:
 
-**Symptoms:**
-- `apt-get install` appears frozen during hailort-dkms installation
+```bash
+# Clone repository
+cd ~
+git clone --depth 1 https://github.com/hailo-ai/hailo-apps-infra.git
 
-**Solutions:**
+# Install dependencies
+sudo apt-get install -y python3-venv pkg-config
 
-1. **Wait patiently** - DKMS compilation can take 5-10 minutes on Pi5
-2. **Check progress** in another terminal:
-   ```bash
-   ps aux | grep dkms
-   tail -f /var/lib/dkms/hailort/*/build/make.log
-   ```
-3. **Ensure adequate cooling** - CPU throttling slows compilation
-4. **If truly stuck**, cancel (Ctrl+C) and retry:
-   ```bash
-   sudo apt-get clean
-   sudo apt-get install -y hailort-dkms
-   ```
+# Run installer
+cd hailo-apps-infra
+sudo ./install.sh
+```
 
-### Reboot Required But Robot Unreachable
-
-**Symptoms:**
-- Installation script says "reboot recommended"
-- SSH connection lost or robot not responding
-
-**Solutions:**
-
-1. **Physical reboot** - Power cycle the robot if SSH is unavailable
-2. **Resume installation** after reboot:
-   ```bash
-   uv run python deploy_hailo8.py install --skip-reboot
-   ```
-3. The `--skip-reboot` flag continues installation after reboot without prompting again
-
-## Getting Additional Help
-
-If issues persist after trying troubleshooting steps:
-
-1. **Run diagnostic commands** and save output:
-   ```bash
-   uv run python deploy_hailo8.py check > hailo_check.txt
-   lspci -vv > pcie_info.txt
-   dmesg > kernel_log.txt
-   ```
-
-2. **Collect system information**:
-   ```bash
-   uname -a
-   cat /etc/os-release
-   dpkg -l | grep hailo
-   ```
-
-3. **Check Hailo documentation**:
-   - Official docs: https://hailo.ai/developer-zone/documentation/
-   - Community forum: https://community.hailo.ai/
-
-4. **Report issues** with collected logs to project maintainers
+Note: hailo-apps-infra has additional dependencies and the full TAPPAS core may not work on Ubuntu due to Raspberry Pi OS specific packages.
 
 ## Uninstallation
 
@@ -527,17 +405,13 @@ To remove HailoRT driver (if needed):
 
 ```bash
 # Remove packages
-sudo apt-get remove --purge hailort hailort-dkms
-
-# Remove Python bindings
-pip uninstall hailort
+sudo apt-get remove --purge hailort hailort-pcie-driver python3-hailort
 
 # Remove repository configuration
-sudo rm /etc/apt/sources.list.d/hailo.list
-sudo rm /usr/share/keyrings/hailo-archive-keyring.gpg
+sudo rm /etc/apt/sources.list.d/raspi.list
 
 # Clean up state markers
-rm -f ~/.landerpi_setup/hailo_*
+rm -f ~/.landerpi_setup/hailo423_*
 ```
 
 Note: This does not remove the physical Hailo-8 hardware or disable PCIe.

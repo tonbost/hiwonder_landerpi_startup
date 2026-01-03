@@ -1,0 +1,22 @@
+[Unit]
+Description=Hailo Inference Server for LanderPi
+After=network.target
+
+[Service]
+Type=simple
+User=tonbost
+WorkingDirectory=/home/tonbost/landerpi/hailo
+ExecStart=/usr/bin/python3 /home/tonbost/landerpi/hailo/hailo_inference_server.py --model /home/tonbost/landerpi/hailo/models/yolov11n.hef --port 5555
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/tonbost/landerpi /home/tonbost/.hailo
+
+[Install]
+WantedBy=multi-user.target

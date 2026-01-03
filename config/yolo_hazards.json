@@ -1,0 +1,13 @@
+{
+  "hazard_classes": [
+    "person",
+    "dog",
+    "cat",
+    "cup",
+    "bottle",
+    "stop sign"
+  ],
+  "hazard_distance": 2.5,
+  "semantic_stop_distance": 0.8,
+  "_comment": "Edit this file to add/remove hazard classes without changing code. Deploy with: uv run python deploy_ros2_stack.py deploy"
+}

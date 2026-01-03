@@ -2,14 +2,19 @@
 """
 Deploy Hailo 8 AI Accelerator to LanderPi Robot.
 
-Installs HailoRT driver, uploads models, and deploys Hailo-accelerated YOLO node.
+Installs HailoRT 4.23 driver, uploads models, and deploys Hailo-accelerated YOLO node.
 
 Usage:
     uv run python deploy_hailo8.py check     # Check Hailo hardware/driver status
-    uv run python deploy_hailo8.py install   # Install HailoRT on robot
+    uv run python deploy_hailo8.py install   # Install HailoRT 4.23 on robot
     uv run python deploy_hailo8.py deploy    # Upload models + ROS2 node
     uv run python deploy_hailo8.py test      # Run validation test
     uv run python deploy_hailo8.py status    # Show Hailo device info
+
+Notes:
+    - Uses Raspberry Pi Trixie repository for HailoRT 4.23
+    - Supports Python 3.13 (Ubuntu 25.10)
+    - M.2 Hailo-8 modules have firmware 4.19.0 (not upgradeable, works with 4.23 runtime)
 """
 
 import json
@@ -161,9 +166,10 @@ def status():
 @app.command()
 def install(
     skip_reboot: bool = typer.Option(False, "--skip-reboot", help="Skip reboot prompt after DKMS install"),
+    force: bool = typer.Option(False, "--force", help="Force reinstall even if already installed"),
 ):
-    """Install HailoRT driver stack on robot."""
-    console.print(Panel("Installing HailoRT Driver", style="bold blue"))
+    """Install HailoRT 4.23 driver stack on robot."""
+    console.print(Panel("Installing HailoRT 4.23 Driver", style="bold blue"))
 
     conn = get_connection()
     config = load_config()
@@ -174,49 +180,84 @@ def install(
     conn.run(f"mkdir -p {marker_dir}", hide=True)
 
     def is_done(step: str) -> bool:
-        result = conn.run(f"test -f {marker_dir}/hailo_{step}", hide=True, warn=True)
+        if force:
+            return False
+        result = conn.run(f"test -f {marker_dir}/hailo423_{step}", hide=True, warn=True)
         return result.return_code == 0
 
     def mark_done(step: str):
-        conn.run(f"touch {marker_dir}/hailo_{step}", hide=True)
+        conn.run(f"touch {marker_dir}/hailo423_{step}", hide=True)
 
-    # Step 1: Add Hailo repository
+    # Step 1: Add Raspberry Pi Trixie repository (contains HailoRT 4.23)
     if is_done("repo_added"):
-        console.print("[dim]Step 1: Hailo repository already added[/dim]")
+        console.print("[dim]Step 1: Raspberry Pi Trixie repository already added[/dim]")
     else:
-        console.print("\n[bold]Step 1: Adding Hailo APT repository...[/bold]")
+        console.print("\n[bold]Step 1: Adding Raspberry Pi Trixie repository (HailoRT 4.23)...[/bold]")
+        # Download and install Raspberry Pi GPG key
         conn.sudo(
-            "wget -qO - https://hailo.ai/keys/hailo-public.gpg | "
-            "gpg --dearmor -o /usr/share/keyrings/hailo-archive-keyring.gpg",
+            "bash -c 'curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key | "
+            "gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg'",
+            hide=True,
+            pty=True,
+            warn=True
+        )
+        # Add the Trixie repository (has HailoRT 4.23)
+        conn.sudo(
+            "bash -c 'echo \"deb [arch=arm64 signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] "
+            "https://archive.raspberrypi.com/debian/ trixie main\" > /etc/apt/sources.list.d/raspi.list'",
             hide=True,
             pty=True
         )
-        conn.sudo(
-            'echo "deb [arch=arm64 signed-by=/usr/share/keyrings/hailo-archive-keyring.gpg] '
-            'https://hailo.ai/raspberry-pi/ stable main" | '
-            'tee /etc/apt/sources.list.d/hailo.list',
-            hide=True,
-            pty=True
-        )
-        mark_done("repo_added")
-        console.print("  [green]✓[/green] Repository added")
-
-    # Step 2: Install packages
-    if is_done("packages_installed"):
-        console.print("[dim]Step 2: HailoRT packages already installed[/dim]")
-    else:
-        console.print("\n[bold]Step 2: Installing HailoRT packages...[/bold]")
-        console.print("  Updating package lists...")
         conn.sudo("apt-get update -qq", hide=True, pty=True)
-        console.print("  Installing hailort...")
-        conn.sudo("apt-get install -y hailort", hide=True, pty=True)
-        console.print("  Installing hailort-dkms...")
-        conn.sudo("apt-get install -y hailort-dkms", hide=True, pty=True)
-        mark_done("packages_installed")
-        console.print("  [green]✓[/green] Packages installed")
+        mark_done("repo_added")
+        console.print("  [green]✓[/green] Raspberry Pi Trixie repository added")
 
-    # Step 3: Load kernel module
-    console.print("\n[bold]Step 3: Loading kernel module...[/bold]")
+    # Step 2: Install prerequisites (DKMS must be installed FIRST per official docs)
+    if is_done("prereqs_installed"):
+        console.print("[dim]Step 2: Prerequisites already installed[/dim]")
+    else:
+        console.print("\n[bold]Step 2: Installing prerequisites...[/bold]")
+        console.print("  Installing DKMS (required before hailo packages)...")
+        conn.sudo("apt-get install -y dkms", hide=True, pty=True, warn=True, timeout=120)
+
+        # Install kernel headers for the running kernel
+        kernel_result = conn.run("uname -r", hide=True)
+        kernel_version = kernel_result.stdout.strip()
+        console.print(f"  Running kernel: {kernel_version}")
+
+        build_check = conn.run(f"test -d /lib/modules/{kernel_version}/build", hide=True, warn=True)
+        if build_check.return_code != 0:
+            headers_pkg = f"linux-headers-{kernel_version}"
+            console.print(f"  Installing {headers_pkg}...")
+            conn.sudo(f"apt-get install -y {headers_pkg}", hide=True, pty=True, warn=True, timeout=300)
+
+        mark_done("prereqs_installed")
+        console.print("  [green]✓[/green] Prerequisites installed")
+
+    # Step 3: Remove old Hailo packages if present
+    console.print("\n[bold]Step 3: Removing old Hailo packages (if any)...[/bold]")
+    conn.sudo("apt-get remove -y hailo-dkms hailort hailofw 2>/dev/null || true", hide=True, pty=True, warn=True, timeout=120)
+    console.print("  [green]✓[/green] Old packages removed")
+
+    # Step 4: Install HailoRT 4.23 packages
+    if is_done("packages_installed"):
+        console.print("[dim]Step 4: HailoRT 4.23 packages already installed[/dim]")
+    else:
+        console.print("\n[bold]Step 4: Installing HailoRT 4.23 packages...[/bold]")
+
+        # Install hailort runtime
+        console.print("  Installing hailort=4.23.0...")
+        conn.sudo("apt-get install -y hailort=4.23.0", hide=True, pty=True, warn=True, timeout=300)
+
+        # Install PCIe driver (includes DKMS module and firmware)
+        console.print("  Installing hailort-pcie-driver (DKMS build may take time)...")
+        conn.sudo("apt-get install -y hailort-pcie-driver", hide=True, pty=True, warn=True, timeout=600)
+
+        mark_done("packages_installed")
+        console.print("  [green]✓[/green] HailoRT 4.23 packages installed")
+
+    # Step 5: Load kernel module
+    console.print("\n[bold]Step 5: Loading kernel module...[/bold]")
     conn.sudo("modprobe hailo_pci", hide=True, warn=True, pty=True)
 
     # Verify device node
@@ -231,29 +272,49 @@ def install(
             console.print("Then re-run: uv run python deploy_hailo8.py install --skip-reboot")
             return
 
-    # Step 4: Install Python bindings
+    # Step 6: Install Python bindings (4.23 supports Python 3.13!)
     if is_done("python_installed"):
-        console.print("[dim]Step 4: Python bindings already installed[/dim]")
+        console.print("[dim]Step 6: Python bindings already installed[/dim]")
     else:
-        console.print("\n[bold]Step 4: Installing Python bindings...[/bold]")
-        conn.run("pip install hailort --break-system-packages", hide=True)
+        console.print("\n[bold]Step 6: Installing Python bindings...[/bold]")
+        py_version = conn.run("python3 -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")'", hide=True)
+        py_ver = py_version.stdout.strip()
+        console.print(f"  Python version: {py_ver}")
+
+        # 4.23 supports Python 3.13 via apt
+        apt_result = conn.sudo("apt-get install -y python3-hailort", hide=True, pty=True, warn=True, timeout=120)
+        if apt_result.return_code == 0:
+            console.print("  [green]✓[/green] Python bindings installed (python3-hailort)")
+        else:
+            console.print(f"  [yellow]![/yellow] Python bindings installation failed")
+            console.print("  [dim]Try: pip install hailort --break-system-packages[/dim]")
         mark_done("python_installed")
-        console.print("  [green]✓[/green] Python bindings installed")
 
     # Verify
     console.print("\n[bold]Verification:[/bold]")
-    result = conn.run("hailortcli scan", hide=True, warn=True)
+    result = conn.run("hailortcli --version && hailortcli scan", hide=True, warn=True)
     if result.return_code == 0:
         console.print(result.stdout)
-        console.print("\n[bold green]HailoRT installation complete![/bold green]")
+
+        # Check Python bindings
+        py_result = conn.run("python3 -c 'import hailo_platform; print(f\"Python API: {hailo_platform.__version__}\")'", hide=True, warn=True)
+        if py_result.return_code == 0:
+            console.print(py_result.stdout.strip())
+
+        # Note about firmware version mismatch (normal for M.2 modules)
+        fw_result = conn.run("hailortcli fw-control identify 2>&1 | grep -i 'unsupported\\|warning'", hide=True, warn=True)
+        if fw_result.return_code == 0:
+            console.print("\n[dim]Note: Firmware version warning is normal for M.2 modules (firmware 4.19.0 works with runtime 4.23.0)[/dim]")
+
+        console.print("\n[bold green]HailoRT 4.23 installation complete![/bold green]")
     else:
         console.print("[red]Verification failed. Check logs above.[/red]")
 
 
 @app.command()
 def deploy():
-    """Upload models and ROS2 node to robot."""
-    console.print(Panel("Deploying Hailo Models and Node", style="bold blue"))
+    """Upload models, inference server, and install systemd service."""
+    console.print(Panel("Deploying Hailo Models and Server", style="bold blue"))
 
     conn = get_connection()
     config = load_config()
@@ -262,7 +323,6 @@ def deploy():
     # Create remote directories
     console.print("\n[bold]Creating directories...[/bold]")
     conn.run(f"mkdir -p {home_dir}/landerpi/hailo/models", hide=True)
-    conn.run(f"mkdir -p {home_dir}/landerpi/ros2_nodes/yolo_hailo", hide=True)
 
     # Upload models
     console.print("\n[bold]Uploading models...[/bold]")
@@ -278,33 +338,86 @@ def deploy():
         console.print("  [yellow]![/yellow] No HEF models found in hailo8-int/models/")
         console.print("  See docs/MODEL_CONVERSION.md for conversion instructions")
 
-    # Upload ROS2 node
-    console.print("\n[bold]Uploading ROS2 node...[/bold]")
-    node_dir = HAILO_DIR / "ros2_nodes" / "yolo_hailo"
-    if node_dir.exists():
-        for item in node_dir.rglob("*"):
-            if item.is_file() and "__pycache__" not in str(item):
-                rel_path = item.relative_to(node_dir)
-                remote_path = f"{home_dir}/landerpi/ros2_nodes/yolo_hailo/{rel_path}"
-                remote_dir = str(Path(remote_path).parent)
-                conn.run(f"mkdir -p {remote_dir}", hide=True)
-                conn.put(str(item), remote_path)
-                console.print(f"  [dim]{rel_path}[/dim]")
-        console.print("  [green]✓[/green] ROS2 node uploaded")
+    # Upload inference server
+    console.print("\n[bold]Uploading Hailo inference server...[/bold]")
+    server_src = HAILO_DIR / "host_server" / "hailo_inference_server.py"
+    if server_src.exists():
+        conn.put(str(server_src), f"{home_dir}/landerpi/hailo/hailo_inference_server.py")
+        console.print("  [green]✓[/green] Inference server uploaded")
     else:
-        console.print("  [red]✗[/red] ROS2 node directory not found")
+        console.print("  [red]✗[/red] hailo_inference_server.py not found")
+        return
+
+    # Upload and install systemd service
+    console.print("\n[bold]Installing systemd service...[/bold]")
+    service_src = Path(__file__).parent / "systemd" / "hailo-server.service"
+    if service_src.exists():
+        conn.put(str(service_src), f"/tmp/hailo-server.service")
+        conn.sudo("mv /tmp/hailo-server.service /etc/systemd/system/", pty=True, hide=True)
+        conn.sudo("systemctl daemon-reload", pty=True, hide=True)
+        conn.sudo("systemctl enable hailo-server", pty=True, hide=True)
+        console.print("  [green]✓[/green] hailo-server.service installed and enabled")
+    else:
+        console.print("  [yellow]![/yellow] systemd service file not found")
 
     # Upload hazard config
     console.print("\n[bold]Uploading config...[/bold]")
     config_src = Path(__file__).parent / "config" / "yolo_hazards.json"
     if config_src.exists():
+        conn.run(f"mkdir -p {home_dir}/landerpi/config", hide=True)
         conn.put(str(config_src), f"{home_dir}/landerpi/config/yolo_hazards.json")
         console.print("  [green]✓[/green] Hazard config uploaded")
 
     console.print("\n[bold green]Deployment complete![/bold green]")
+    console.print("\nCommands:")
+    console.print("  uv run python deploy_hailo8.py start   # Start inference server")
+    console.print("  uv run python deploy_hailo8.py stop    # Stop inference server")
     console.print("\nTo use Hailo-accelerated YOLO:")
-    console.print("  1. Ensure ROS2 stack is running: uv run python deploy_ros2_stack.py deploy")
-    console.print("  2. Launch with Hailo: use_hailo:=true in launch config")
+    console.print("  uv run python deploy_explorer.py start --yolo-hailo --duration 5")
+
+
+@app.command()
+def start():
+    """Start the Hailo inference server."""
+    console.print("Starting Hailo inference server...")
+    conn = get_connection()
+    conn.sudo("systemctl start hailo-server", pty=True, hide=True, warn=True)
+
+    # Check status
+    import time
+    time.sleep(1)
+    result = conn.run("systemctl is-active hailo-server", hide=True, warn=True)
+    if result.stdout.strip() == "active":
+        console.print("[green]Hailo server started successfully![/green]")
+        # Show port
+        result = conn.run("ss -tlnp | grep 5555", hide=True, warn=True)
+        if result.return_code == 0:
+            console.print(f"Listening on port 5555")
+    else:
+        console.print("[red]Failed to start server. Check logs:[/red]")
+        console.print("  journalctl -u hailo-server -n 20")
+
+
+@app.command()
+def stop():
+    """Stop the Hailo inference server."""
+    console.print("Stopping Hailo inference server...")
+    conn = get_connection()
+    conn.sudo("systemctl stop hailo-server", pty=True, hide=True, warn=True)
+    console.print("[green]Hailo server stopped.[/green]")
+
+
+@app.command()
+def logs(
+    follow: bool = typer.Option(False, "-f", "--follow", help="Follow log output"),
+    lines: int = typer.Option(50, "-n", "--lines", help="Number of lines to show"),
+):
+    """View Hailo server logs."""
+    conn = get_connection()
+    cmd = f"journalctl -u hailo-server -n {lines}"
+    if follow:
+        cmd += " -f"
+    conn.run(cmd, hide=False, warn=True, pty=True)
 
 
 @app.command()
@@ -328,7 +441,7 @@ def test(
 
     # Check model exists
     console.print("\n[bold]Model Check:[/bold]")
-    model_path = f"{home_dir}/landerpi/hailo/models/yolo11n_hailo.hef"
+    model_path = f"{home_dir}/landerpi/hailo/models/yolov11n.hef"
     result = conn.run(f"ls {model_path}", hide=True, warn=True)
     if result.return_code != 0:
         console.print(f"  [yellow]![/yellow] Model not found: {model_path}")

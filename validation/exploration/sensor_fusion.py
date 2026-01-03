@@ -3,6 +3,7 @@
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional, Tuple, Callable
 
 from rich.console import Console
@@ -10,12 +11,18 @@ from rich.console import Console
 console = Console()
 
 
+def ts() -> str:
+    """Return timestamp string for log correlation with YOLO logs."""
+    return datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
+
+
 @dataclass
 class SensorConfig:
     """Sensor fusion configuration."""
     # Distance thresholds (meters)
-    stop_distance: float = 0.15  # Emergency stop (can get 15cm from obstacles)
+    stop_distance: float = 0.15  # Emergency stop for lidar obstacles (15cm from walls)
     slow_distance: float = 0.30  # Slow down and prepare to turn
+    semantic_stop_distance: float = 0.8  # Stop distance for YOLO hazards (people, pets, bottles)
 
     # Depth camera settings
     depth_center_width: int = 100  # pixels from center to check
@@ -119,22 +126,23 @@ class SensorFusion:
         return self.state.depth_distance
 
     def update_hazards(self, hazards: List[dict]) -> None:
-        """Update from semantic hazards."""
+        """Update from semantic hazards (YOLO detections with depth-based distance)."""
         if not hazards:
             self.state.semantic_hazard = False
             self.state.hazard_type = ""
             return
 
-        # Check for immediate threats
+        # Check for immediate threats using semantic_stop_distance (0.8m for people/pets/bottles)
         for h in hazards:
-            if h["distance"] < self.config.stop_distance * 1.5:  # Extra margin for semantic threats
+            if h["distance"] < self.config.semantic_stop_distance:
                 self.state.semantic_hazard = True
                 self.state.hazard_type = h["type"]
                 # Override closest distance if this is closer
                 if h["distance"] < self.state.closest_distance:
                     self.state.closest_distance = h["distance"]
+                console.print(f"{ts()} [red]HAZARD: {h['type']} at {h['distance']:.2f}m - STOPPING[/red]")
                 return
-        
+
         self.state.semantic_hazard = False
 
 

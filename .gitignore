@@ -29,6 +29,13 @@ remote_scan_*/
 !.claude/skills/landerpi-yolo/
 !.claude/skills/landerpi-hailo/
 
+# Hailo conversion artifacts (models should be downloaded, not committed)
+hailo8-int/conversion/*.log
+hailo8-int/conversion/*.whl
+hailo8-int/conversion/*.onnx
+hailo8-int/conversion/*.pt
+hailo8-int/conversion/*.hef
+
 # Utility scripts not needed for core functionality
 extract_pdf*.py
 analyze_ros2_driver.py
