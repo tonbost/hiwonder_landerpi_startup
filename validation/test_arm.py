@@ -35,6 +35,16 @@ HOME_POSITION = 500  # Center position
 GRIPPER_OPEN = 200
 GRIPPER_CLOSED = 700
 
+# Exploring home position - arm folded back, out of the way for navigation
+EXPLORE_HOME = {
+    1: 547,   # Base: slightly rotated
+    2: 818,   # Shoulder: raised/folded back
+    3: 203,   # Elbow: bent forward
+    4: 58,    # Wrist: tilted down (arm tucked)
+    5: 501,   # Rotate: centered
+    10: 496,  # Gripper: open
+}
+
 # Movement duration (seconds)
 DEFAULT_DURATION = 2.0
 
@@ -231,6 +241,39 @@ time.sleep({DEFAULT_DURATION + 0.5})
 # Beep to indicate completion
 board.set_buzzer(500, 0.1, 0.1, 1)
 print("Home position reached")
+"""
+
+        return self.execute_script(script, timeout=int(DEFAULT_DURATION + 5))
+
+    def move_to_explore_home(self) -> bool:
+        """Move arm to exploring home position (folded back, out of the way)."""
+        self.console.print("[yellow]Moving arm to EXPLORE HOME position...[/yellow]")
+
+        sdk_dir = self.sdk_path or "/tmp"
+
+        script = f"""import sys
+sys.path.insert(0, '{sdk_dir}')
+import time
+from ros_robot_controller_sdk import Board
+
+board = Board()
+board.enable_reception()
+
+# Beep to indicate start
+board.set_buzzer(1000, 0.1, 0.1, 1)
+time.sleep(0.3)
+
+# Move to exploring home - arm folded back, out of the way
+positions = [[1, {EXPLORE_HOME[1]}], [2, {EXPLORE_HOME[2]}], [3, {EXPLORE_HOME[3]}],
+             [4, {EXPLORE_HOME[4]}], [5, {EXPLORE_HOME[5]}], [10, {EXPLORE_HOME[10]}]]
+board.bus_servo_set_position({DEFAULT_DURATION}, positions)
+print("Moving to explore home position...")
+
+time.sleep({DEFAULT_DURATION + 0.5})
+
+# Beep to indicate completion
+board.set_buzzer(500, 0.1, 0.1, 1)
+print("Explore home position reached")
 """
 
         return self.execute_script(script, timeout=int(DEFAULT_DURATION + 5))
@@ -579,6 +622,48 @@ def home(
             console.print("[green]Arm moved to home position[/green]")
         else:
             console.print("[red]Failed to move to home[/red]")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[red]Interrupted![/red]")
+        sys.exit(1)
+
+
+@app.command()
+def explore_home(
+    host: Optional[str] = typer.Option(None, help="Robot IP address"),
+    user: Optional[str] = typer.Option(None, help="SSH Username"),
+    password: Optional[str] = typer.Option(None, help="SSH Password"),
+    skip_approval: bool = typer.Option(False, "--yes", "-y", help="Skip approval prompt"),
+):
+    """Move arm to exploring home position (folded back, out of the way)."""
+    config = load_config()
+    host = host or config.get("host")
+    user = user or config.get("user")
+    password = password or config.get("password")
+
+    if not host or not user:
+        console.print("[red]Error: host and user required[/red]")
+        sys.exit(1)
+
+    tester = ArmTest(host, user, password)
+    if not tester.verify_connection():
+        sys.exit(1)
+
+    tester.upload_sdk()
+
+    # Request approval
+    if not skip_approval:
+        console.print("\n[bold yellow]WARNING: Arm will move to explore home position[/bold yellow]")
+        console.print(f"[dim]Position: J1={EXPLORE_HOME[1]}, J2={EXPLORE_HOME[2]}, J3={EXPLORE_HOME[3]}, J4={EXPLORE_HOME[4]}, J5={EXPLORE_HOME[5]}, Grip={EXPLORE_HOME[10]}[/dim]")
+        if not Confirm.ask("Continue?", default=False):
+            console.print("[blue]Cancelled[/blue]")
+            sys.exit(0)
+
+    try:
+        if tester.move_to_explore_home():
+            console.print("[green]Arm moved to explore home position[/green]")
+        else:
+            console.print("[red]Failed to move to explore home[/red]")
             sys.exit(1)
     except KeyboardInterrupt:
         console.print("\n[red]Interrupted![/red]")

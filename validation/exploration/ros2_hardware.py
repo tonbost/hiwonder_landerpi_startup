@@ -28,6 +28,7 @@ class ROS2Config:
     arm_cmd_topic: str = "/arm/cmd"
     arm_state_topic: str = "/arm/state"
     battery_topic: str = "/battery"
+    hazards_topic: str = "/hazards"
 
     # Timeouts (seconds)
     cmd_timeout: float = 5.0
@@ -37,6 +38,11 @@ class ROS2Config:
 
     # SDK path (for battery fallback)
     sdk_path: str = "~/ros_robot_controller"
+
+    # Sensor bridge configuration (low-latency file-based reading)
+    use_file_bridge: bool = True  # Use JSON files from sensor_bridge node
+    data_dir: str = "~/landerpi_data"  # Directory with JSON files
+    file_stale_threshold: float = 2.0  # Max age of data before fallback (seconds)
 
 
 class ROS2Hardware:
@@ -49,7 +55,16 @@ class ROS2Hardware:
     def __init__(self, config: Optional[ROS2Config] = None):
         self.config = config or ROS2Config()
         self._sdk_path = Path(self.config.sdk_path).expanduser()
+
+        # Sensor bridge file paths (low-latency reading)
+        self._data_dir = Path(self.config.data_dir).expanduser()
+        self._lidar_file = self._data_dir / "lidar.json"
+        self._hazards_file = self._data_dir / "hazards.json"
+        self._depth_stats_file = self._data_dir / "depth_stats.json"
+        self._battery_file = self._data_dir / "battery.json"
+
         # Sensor reading cache to avoid slowing down control loop
+        # (still used for subprocess fallback)
         self._last_depth_time: float = 0.0
         self._cached_depth: Optional[dict] = None
         self._depth_read_interval: float = 1.0  # Only read depth every 1 second
@@ -59,6 +74,10 @@ class ROS2Hardware:
         self._lidar_read_interval: float = 0.5  # Read lidar every 0.5 seconds
         # Background motion process (for continuous movement)
         self._motion_process: Optional[subprocess.Popen] = None
+        # Hazard cache (reading is slow, so cache results)
+        self._last_hazard_time: float = 0.0
+        self._cached_hazards: List[dict] = []
+        self._hazard_read_interval: float = 0.5  # Read hazards every 0.5 seconds
 
     def _run_docker(self, cmd: str, timeout: Optional[float] = None) -> Tuple[bool, str]:
         """Run command in Docker container.
@@ -105,6 +124,38 @@ sys.path.insert(0, '{self._sdk_path}')
             return result.returncode == 0, result.stdout.strip()
         except Exception as e:
             return False, str(e)
+
+    def _read_json_file(self, file_path: Path) -> Optional[dict]:
+        """Read JSON file with freshness check.
+
+        Uses sensor bridge files for low-latency reading (~10ms vs ~400ms).
+
+        Args:
+            file_path: Path to JSON file
+
+        Returns:
+            Dict with data and timestamp, or None if file doesn't exist,
+            is stale, or can't be parsed.
+        """
+        if not self.config.use_file_bridge:
+            return None
+
+        if not file_path.exists():
+            return None
+
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+
+            # Check freshness
+            timestamp = data.get('timestamp', 0)
+            age = time.time() - timestamp
+            if age > self.config.file_stale_threshold:
+                return None  # Data is too old, fall back to subprocess
+
+            return data
+        except (json.JSONDecodeError, IOError, KeyError):
+            return None
 
     # --- Motion Control ---
 
@@ -215,13 +266,28 @@ sys.path.insert(0, '{self._sdk_path}')
     def read_lidar(self) -> Tuple[List[float], float, float]:
         """Read lidar scan via /scan topic.
 
-        Uses throttling to avoid slowing down the control loop.
-        Returns cached result if called too frequently.
+        Uses sensor bridge file for low-latency reading (~10ms).
+        Falls back to subprocess if file not available (~400ms).
 
         Returns:
             Tuple of (ranges, angle_min, angle_increment)
             Empty tuple on failure: ([], 0.0, 0.0)
         """
+        # Try file-based reading first (low-latency, ~10ms)
+        data = self._read_json_file(self._lidar_file)
+        if data:
+            ranges = data.get('ranges', [])
+            angle_min = data.get('angle_min', 0.0)
+            angle_inc = data.get('angle_increment', 0.0)
+            if ranges:
+                self._cached_lidar = (ranges, angle_min, angle_inc)
+                return self._cached_lidar
+
+        # Fallback to subprocess (slower, ~400ms with caching)
+        return self._read_lidar_subprocess()
+
+    def _read_lidar_subprocess(self) -> Tuple[List[float], float, float]:
+        """Read lidar via subprocess (fallback for when sensor bridge unavailable)."""
         now = time.time()
 
         # Return cached result if called too frequently
@@ -309,16 +375,28 @@ sys.path.insert(0, '{self._sdk_path}')
     def read_depth(self) -> Optional[dict]:
         """Read depth camera stats via /depth_stats topic.
 
-        The depth_stats node processes the raw mono16 depth image and
-        publishes JSON stats with min_depth_m, avg_depth_m, valid_percent.
-
-        Uses throttling to avoid slowing down the control loop.
-        Returns cached result if called too frequently.
+        Uses sensor bridge file for low-latency reading (~10ms).
+        Falls back to subprocess if file not available (~400ms).
 
         Returns:
             Dict with 'min_depth', 'avg_depth', 'valid_percent' keys (depths in meters),
             or None if read failed.
         """
+        # Try file-based reading first (low-latency, ~10ms)
+        data = self._read_json_file(self._depth_stats_file)
+        if data:
+            self._cached_depth = {
+                "min_depth": data.get("min_depth_m", 0.0),
+                "avg_depth": data.get("avg_depth_m", 0.0),
+                "valid_percent": data.get("valid_percent", 0.0),
+            }
+            return self._cached_depth
+
+        # Fallback to subprocess (slower, ~400ms with caching)
+        return self._read_depth_subprocess()
+
+    def _read_depth_subprocess(self) -> Optional[dict]:
+        """Read depth stats via subprocess (fallback for when sensor bridge unavailable)."""
         now = time.time()
 
         # Return cached result if called too frequently
@@ -360,6 +438,72 @@ sys.path.insert(0, '{self._sdk_path}')
 
         return self._cached_depth
 
+    # --- Hazards ---
+
+    def read_hazards(self) -> List[dict]:
+        """Read semantic hazards from /hazards topic.
+
+        Uses sensor bridge file for low-latency reading (~10ms).
+        Falls back to subprocess if file not available (~400ms).
+
+        Returns:
+            List of hazard dicts: [{"type": "person", "distance": 1.0, ...}, ...]
+        """
+        # Try file-based reading first (low-latency, ~10ms)
+        data = self._read_json_file(self._hazards_file)
+        if data:
+            self._cached_hazards = data.get("hazards", [])
+            return self._cached_hazards
+
+        # Fallback to subprocess (slower, ~400ms with caching)
+        return self._read_hazards_subprocess()
+
+    def _read_hazards_subprocess(self) -> List[dict]:
+        """Read hazards via subprocess (fallback for when sensor bridge unavailable)."""
+        now = time.time()
+        if now - self._last_hazard_time < self._hazard_read_interval:
+            return self._cached_hazards
+
+        self._last_hazard_time = now
+
+        # Read from /hazards topic with timeout long enough to get data
+        full_cmd = (
+            f'{DOCKER_EXEC} "{ROS_SOURCE} timeout 0.3 ros2 topic echo /hazards 2>/dev/null" '
+            f'2>/dev/null | grep -m1 "data:" | sed \'s/data: //\' | tr -d "\'"'
+        )
+        try:
+            result = subprocess.run(
+                full_cmd, shell=True, capture_output=True, text=True, timeout=1.0
+            )
+            output = result.stdout.strip()
+            if output and output.startswith("{"):
+                # Try to parse full JSON first
+                try:
+                    data = json.loads(output)
+                    self._cached_hazards = data.get("hazards", [])
+                    return self._cached_hazards
+                except json.JSONDecodeError:
+                    # Output is truncated - extract individual hazard objects
+                    hazards = []
+                    for match in re.finditer(
+                        r'\{"type":\s*"([^"]+)",\s*"distance":\s*([\d.]+),\s*"angle":\s*([-\d.]+),\s*"score":\s*([\d.]+),\s*"source":\s*"([^"]+)"\}',
+                        output
+                    ):
+                        hazards.append({
+                            "type": match.group(1),
+                            "distance": float(match.group(2)),
+                            "angle": float(match.group(3)),
+                            "score": float(match.group(4)),
+                            "source": match.group(5),
+                        })
+                    self._cached_hazards = hazards
+                    return hazards
+        except subprocess.TimeoutExpired:
+            pass
+
+        # Keep previous cached value if read failed
+        return self._cached_hazards
+
     # --- Arm Control ---
 
     def set_arm_pose(self, positions: List[List[int]], duration: float) -> bool:
@@ -398,33 +542,51 @@ print("OK")
         """
         return self.set_arm_pose([[servo_id, position]], duration)
 
-    def init_arm_horizontal(self) -> bool:
-        """Initialize arm to horizontal camera position.
+    def init_arm_explore(self) -> bool:
+        """Initialize arm to exploring home position (folded back, out of the way).
 
-        Positions verified for camera facing straight ahead horizontally.
-        Servo 4 at 350 keeps camera level.
+        Arm is tucked for safe navigation. Camera extends for scanning when needed.
         """
-        positions = [[1, 550], [2, 785], [3, 0], [4, 350], [5, 501]]
+        # Exploring home: arm folded back, out of the way
+        positions = [[1, 547], [2, 818], [3, 203], [4, 58], [5, 501]]
         duration = 2.0
-        print("Initializing arm to horizontal camera position...")
+        print("Initializing arm to explore home position...")
         ok = self.set_arm_pose(positions, duration)
         if ok:
             time.sleep(duration + 0.5)  # Wait for arm to reach position
-            print("Arm ready")
+            print("Arm ready (tucked)")
         else:
             print("Arm init failed")
         return ok
+
+    # Keep old name as alias for compatibility
+    def init_arm_horizontal(self) -> bool:
+        """Alias for init_arm_explore (legacy name)."""
+        return self.init_arm_explore()
 
     # --- Battery ---
 
     def get_battery(self) -> Optional[float]:
         """Get battery voltage in volts.
 
-        First tries ROS2 /battery topic, falls back to SDK.
+        Uses sensor bridge file for low-latency reading (~10ms).
+        Falls back to ROS2 topic then SDK if file not available.
 
         Returns:
             Battery voltage in V, or None if read failed.
         """
+        # Try file-based reading first (low-latency, ~10ms)
+        data = self._read_json_file(self._battery_file)
+        if data:
+            voltage = data.get("voltage", 0.0)
+            if voltage > 0:
+                return voltage
+
+        # Fallback to subprocess/SDK
+        return self._get_battery_fallback()
+
+    def _get_battery_fallback(self) -> Optional[float]:
+        """Get battery via ROS2 topic or SDK (fallback methods)."""
         # Try ROS2 topic first (if battery_monitor node is running)
         cmd = f"timeout 1 ros2 topic echo --once {self.config.battery_topic} --field data 2>/dev/null"
         ok, output = self._run_docker(cmd, timeout=self.config.battery_timeout)
@@ -469,6 +631,63 @@ for _ in range(5):
             shell=True, capture_output=True, text=True
         )
         return bool(result.stdout.strip())
+
+    def check_camera_health(self) -> Tuple[bool, float]:
+        """Check if camera is publishing images.
+
+        Returns:
+            Tuple of (is_healthy, rate_hz)
+            - is_healthy: True if camera is publishing at > 1 Hz
+            - rate_hz: Measured publish rate (0 if not publishing)
+        """
+        # Quick check - try to get one message with short timeout
+        # Use grep to wait for the rate line (head -1 terminates too early)
+        cmd = "timeout 3 ros2 topic hz /aurora/rgb/image_raw --window 3 2>&1 | grep -m 1 'average rate'"
+        ok, output = self._run_docker(cmd, timeout=5.0)
+
+        if not ok or "does not appear" in output or not output:
+            return False, 0.0
+
+        # Parse rate from output like "average rate: 10.274"
+        import re
+        match = re.search(r'average rate:\s*([\d.]+)', output)
+        if match:
+            rate = float(match.group(1))
+            return rate > 1.0, rate
+
+        return False, 0.0
+
+    def restart_camera(self) -> bool:
+        """Restart the camera driver when it gets stuck.
+
+        Kills the aurora930 process and restarts the ROS2 container.
+
+        Returns:
+            True if restart succeeded and camera is publishing again
+        """
+        # Kill the stuck camera process
+        kill_cmd = "pkill -9 -f aurora930"
+        subprocess.run(
+            f"{DOCKER_EXEC} '{kill_cmd}'",
+            shell=True, capture_output=True, timeout=5
+        )
+
+        # Restart the docker container (cleanest way to restart all nodes)
+        restart_cmd = "cd ~/landerpi/docker && docker compose restart"
+        result = subprocess.run(
+            restart_cmd,
+            shell=True, capture_output=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            return False
+
+        # Wait for camera to come back up
+        time.sleep(8)
+
+        # Check if camera recovered
+        healthy, rate = self.check_camera_health()
+        return healthy
 
     def get_status(self) -> dict:
         """Get hardware interface status."""

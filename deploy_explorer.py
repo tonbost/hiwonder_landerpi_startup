@@ -151,8 +151,14 @@ def start(
     speed: float = typer.Option(0.35, help="Forward speed (m/s)"),
     turn_multiplier: float = typer.Option(2.5, "--turn-multiplier", help="Turn time multiplier for carpet friction (default: 2.5)"),
     rosbag: bool = typer.Option(False, "--rosbag", help="Enable ROS2 bag recording"),
+    yolo: bool = typer.Option(False, "--yolo", help="Enable YOLO object detection (CPU, 2-5 FPS)"),
+    yolo_hailo: bool = typer.Option(False, "--yolo-hailo", help="Enable YOLO with Hailo-8 acceleration (25-40 FPS)"),
+    yolo_logging: bool = typer.Option(False, "--yolo-logging", help="Enable YOLO debug logging (saves images to ~/yolo_logs)"),
 ):
     """Start exploration on robot."""
+    # --yolo-hailo implies --yolo
+    if yolo_hailo:
+        yolo = True
     config = load_config()
     host = host or config.get("host")
     user = user or config.get("user")
@@ -163,13 +169,17 @@ def start(
         sys.exit(1)
 
     rosbag_str = "[green]Yes[/green]" if rosbag else "No"
+    yolo_str = "[green]Hailo (25-40 FPS)[/green]" if yolo_hailo else ("[green]CPU (2-5 FPS)[/green]" if yolo else "No")
+    yolo_logging_str = "[green]Yes[/green]" if yolo_logging else "No"
     console.print(Panel.fit(
         f"[bold]Start Exploration[/bold]\n\n"
         f"Host: {host}\n"
         f"Duration: {duration} min\n"
         f"Speed: {speed} m/s\n"
         f"Turn multiplier: {turn_multiplier}x (carpet friction)\n"
-        f"ROS2 bag: {rosbag_str}\n\n"
+        f"ROS2 bag: {rosbag_str}\n"
+        f"YOLO: {yolo_str}\n"
+        f"YOLO logging: {yolo_logging_str}\n\n"
         f"[bold red]Robot will MOVE![/bold red]",
         title="Start",
         border_style="yellow"
@@ -202,6 +212,62 @@ def start(
             conn.run(f"chmod +x {remote_path}", hide=True)
             console.print("[green]Deployment complete[/green]")
 
+        # Start Hailo inference server if requested
+        if yolo_hailo:
+            console.print("[blue]Starting Hailo inference server...[/blue]")
+            # Check if already running
+            result = conn.run("systemctl is-active hailo-server", hide=True, warn=True)
+            if result.stdout.strip() != "active":
+                conn.sudo("systemctl start hailo-server", pty=True, hide=True, warn=True)
+                time.sleep(2)
+                # Verify it started
+                result = conn.run("systemctl is-active hailo-server", hide=True, warn=True)
+                if result.stdout.strip() == "active":
+                    console.print("[green]Hailo server started[/green]")
+                else:
+                    console.print("[red]Failed to start Hailo server![/red]")
+                    console.print("Run: uv run python deploy_hailo8.py deploy")
+                    sys.exit(1)
+            else:
+                console.print("[dim]Hailo server already running[/dim]")
+
+        # Restart ROS2 stack if YOLO logging or Hailo mode requested
+        if yolo_logging or yolo_hailo:
+            features = []
+            if yolo_hailo:
+                features.append("Hailo bridge")
+            if yolo_logging:
+                features.append("YOLO logging")
+            console.print(f"[blue]Restarting ROS2 stack with {' + '.join(features)}...[/blue]")
+
+            # Stop current stack completely
+            conn.run("cd ~/landerpi/docker && docker compose down", hide=True, warn=True)
+            time.sleep(2)
+
+            # Build environment variables for restart
+            env_vars = []
+            if yolo_logging:
+                conn.run("echo 'true' > ~/landerpi/.yolo_logging_enabled", hide=True)
+                env_vars.append("YOLO_LOGGING=true")
+            if yolo_hailo:
+                env_vars.append("USE_HAILO=true")
+
+            env_prefix = " ".join(env_vars)
+            restart_cmd = f'''cd ~/landerpi/docker && {env_prefix} docker compose up -d'''
+            result = conn.run(restart_cmd, warn=True, hide=True)
+
+            if result.ok:
+                console.print(f"[green]ROS2 stack restarted[/green]")
+                if yolo_hailo:
+                    console.print("[dim]Using Hailo-8 via ZeroMQ bridge (25-40 FPS)[/dim]")
+                if yolo_logging:
+                    console.print("[dim]YOLO images will be saved to ~/yolo_logs/[/dim]")
+                # Wait for stack to fully initialize (build + launch)
+                console.print("[dim]Waiting for ROS2 stack to initialize...[/dim]")
+                time.sleep(15)
+            else:
+                console.print("[yellow]Warning: Failed to restart stack[/yellow]")
+
         console.print("[green]Starting exploration...[/green]")
         console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
@@ -209,6 +275,8 @@ def start(
         cmd = f"python3 ~/{REMOTE_SCRIPT} explore --duration {duration} --speed {speed} --turn-multiplier {turn_multiplier}"
         if rosbag:
             cmd += " --rosbag"
+        if yolo:
+            cmd += " --yolo"
         conn.run(cmd, pty=True)
 
     except KeyboardInterrupt:

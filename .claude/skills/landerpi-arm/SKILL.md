@@ -110,6 +110,17 @@ class ArmController(Node):
         self.set_servos(0.5, [(10, 800)])
 ```
 
+## Direct Testing Commands
+
+For direct arm control (no ROS2 required):
+```bash
+uv run python validation/test_arm.py status            # Read servo positions
+uv run python validation/test_arm.py home --yes        # Move to home (all 500)
+uv run python validation/test_arm.py explore-home --yes # Move to explore home (tucked)
+uv run python validation/test_arm.py test --yes        # Full arm test
+uv run python validation/test_arm.py stop              # Emergency stop
+```
+
 ## ROS2 Stack Testing
 
 For ROS2-based testing (requires deployed stack):
@@ -167,6 +178,7 @@ board.bus_servo_stop([1, 2, 3, 4, 5, 10])
 | Position | J1 | J2 | J3 | J4 | J5 | Grip | Description |
 |----------|----|----|----|----|----|----|-------------|
 | Home | 500 | 500 | 500 | 500 | 500 | 500 | Neutral |
+| Explore Home | 547 | 818 | 203 | 58 | 501 | 496 | Tucked for navigation |
 | Ready | 500 | 720 | 210 | 220 | 500 | 200 | Ready to pick |
 | Extended | 500 | 300 | 700 | 500 | 500 | 500 | Forward reach |
 | Folded | 500 | 800 | 200 | 800 | 500 | 500 | Folded back |

@@ -3,6 +3,7 @@
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional, Tuple, Callable
 
 from rich.console import Console
@@ -10,12 +11,18 @@ from rich.console import Console
 console = Console()
 
 
+def ts() -> str:
+    """Return timestamp string for log correlation with YOLO logs."""
+    return datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
+
+
 @dataclass
 class SensorConfig:
     """Sensor fusion configuration."""
     # Distance thresholds (meters)
-    stop_distance: float = 0.15  # Emergency stop (can get 15cm from obstacles)
+    stop_distance: float = 0.15  # Emergency stop for lidar obstacles (15cm from walls)
     slow_distance: float = 0.30  # Slow down and prepare to turn
+    semantic_stop_distance: float = 0.8  # Stop distance for YOLO hazards (people, pets, bottles)
 
     # Depth camera settings
     depth_center_width: int = 100  # pixels from center to check
@@ -47,6 +54,9 @@ class ObstacleState:
     should_slow: bool = False
     obstacle_angle: float = 0.0  # degrees, 0 = front
     timestamp: float = 0.0
+    semantic_hazard: bool = False
+    hazard_type: str = ""
+
 
 
 class SensorFusion:
@@ -114,6 +124,33 @@ class SensorFusion:
         else:
             self.state.depth_distance = float('inf')
         return self.state.depth_distance
+
+    def update_hazards(self, hazards: List[dict]) -> None:
+        """Update from semantic hazards (YOLO detections with depth-based distance)."""
+        if not hazards:
+            self.state.semantic_hazard = False
+            self.state.hazard_type = ""
+            return
+
+        # Check for immediate threats using semantic_stop_distance (0.8m for people/pets/bottles)
+        for h in hazards:
+            dist = h.get("distance", float('inf'))
+            htype = h.get("type", "unknown")
+            # Log all hazards detected (for debugging)
+            if dist < 2.0:  # Only log close hazards to avoid spam
+                console.print(f"{ts()} [cyan]YOLO: {htype} at {dist:.2f}m (threshold: {self.config.semantic_stop_distance}m)[/cyan]")
+
+            if dist < self.config.semantic_stop_distance:
+                self.state.semantic_hazard = True
+                self.state.hazard_type = htype
+                # Override closest distance if this is closer
+                if dist < self.state.closest_distance:
+                    self.state.closest_distance = dist
+                console.print(f"{ts()} [red]HAZARD: {htype} at {dist:.2f}m - STOPPING[/red]")
+                return
+
+        self.state.semantic_hazard = False
+
 
     def update_lidar(self, ranges: List[float], angle_min: float, angle_increment: float) -> float:
         """
@@ -200,6 +237,11 @@ class SensorFusion:
             not self.state.should_stop and
             self.state.closest_distance < self.config.slow_distance
         )
+
+        # Semantic Override - YOLO detected hazard takes priority
+        if self.state.semantic_hazard:
+            self.state.should_stop = True
+
         self.state.timestamp = time.time()
 
         return self.state

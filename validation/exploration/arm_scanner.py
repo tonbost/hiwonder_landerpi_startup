@@ -60,12 +60,13 @@ class ArmScannerConfig:
                 5: 501,   # Rotate: level
             }
         if self.home_pose is None:
+            # Exploring home: arm folded back, out of the way for navigation
             self.home_pose = {
-                1: 550,   # Base: center
-                2: 785,   # Shoulder: home
-                3: 0,     # Elbow: home
-                4: 350,   # Wrist: camera horizontal
-                5: 501,   # Rotate: home
+                1: 547,   # Base: slightly rotated
+                2: 818,   # Shoulder: raised/folded back
+                3: 203,   # Elbow: bent forward
+                4: 58,    # Wrist: tilted down (arm tucked)
+                5: 501,   # Rotate: centered
             }
 
 
