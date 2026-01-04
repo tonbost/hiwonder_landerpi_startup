@@ -79,15 +79,22 @@ class FusionNode(Node):
         if (now - self.last_detection_time > 1.0):
             return
 
-        # Need either depth or lidar for distance
-        if self.use_depth:
-            if (now - self.last_depth_time > 1.0) or self.latest_depth is None:
-                return
-        else:
-            if (now - self.last_scan_time > 1.0) or self.latest_scan is None:
-                return
-
         if not self.latest_detections:
+            return
+
+        # Determine which distance source to use (prefer depth, fallback to lidar)
+        depth_available = (
+            self.use_depth and
+            self.latest_depth is not None and
+            (now - self.last_depth_time < 1.0)
+        )
+        lidar_available = (
+            self.latest_scan is not None and
+            (now - self.last_scan_time < 1.0)
+        )
+
+        # Need at least one distance source
+        if not depth_available and not lidar_available:
             return
 
         hazards = []
@@ -115,10 +122,18 @@ class FusionNode(Node):
             angle_from_center_deg = ((self.img_width / 2.0) - cx) / (self.img_width / 2.0) * (self.fov_h / 2.0)
 
             # Get distance - prefer depth camera, fallback to lidar
-            if self.use_depth and self.latest_depth is not None:
+            dist = float('inf')
+            source = "unknown"
+            if depth_available:
                 dist = self.get_depth_distance(cx, cy, bbox_width, bbox_height)
-            else:
+                source = "depth"
+                # If depth returns inf (invalid), try lidar as fallback
+                if dist == float('inf') and lidar_available:
+                    dist = self.get_lidar_distance(angle_from_center_deg)
+                    source = "lidar"
+            elif lidar_available:
                 dist = self.get_lidar_distance(angle_from_center_deg)
+                source = "lidar"
 
             if dist < self.hazard_dist_thresh:
                 hazards.append({
@@ -126,7 +141,7 @@ class FusionNode(Node):
                     "distance": round(dist, 2),
                     "angle": round(angle_from_center_deg, 1),
                     "score": round(score, 2),
-                    "source": "depth" if self.use_depth else "lidar"
+                    "source": source
                 })
 
         # Publish Hazards
