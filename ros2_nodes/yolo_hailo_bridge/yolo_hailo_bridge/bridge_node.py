@@ -23,7 +23,6 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
 from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose, BoundingBox2D
 
 try:
@@ -89,10 +88,10 @@ class YoloHailoBridgeNode(Node):
             '/yolo/detections',
             10)
 
-        self.hazards_publisher = self.create_publisher(
-            String,
-            '/hazards',
-            10)
+        # NOTE: Hazards are published by obstacle_fusion node which correlates
+        # detections with depth camera for accurate distance. We only publish
+        # /yolo/detections for obstacle_fusion to consume.
+        # self.hazards_publisher = self.create_publisher(String, '/hazards', 10)
 
         self.annotated_publisher = self.create_publisher(
             Image,
@@ -180,11 +179,8 @@ class YoloHailoBridgeNode(Node):
             self.total_roundtrip_time += roundtrip_time
             self.consecutive_failures = 0
 
-            # Publish detections
+            # Publish detections (obstacle_fusion will correlate with depth for /hazards)
             self._publish_detections(detections, msg.header)
-
-            # Publish hazards
-            self._publish_hazards(detections)
 
             # Publish annotated image
             self._publish_annotated_image(msg, detections)
@@ -231,30 +227,6 @@ class YoloHailoBridgeNode(Node):
             msg.detections.append(detection)
 
         self.detection_publisher.publish(msg)
-
-    def _publish_hazards(self, detections: list):
-        """Publish hazards for exploration controller."""
-        hazards = []
-        for det in detections:
-            if det['class'] in self.hazard_classes:
-                bbox_area = det['width'] * det['height']
-                estimated_distance = min(self.hazard_distance, 3000.0 / max(bbox_area, 100.0))
-
-                image_center_x = 320
-                angle_deg = (det['cx'] - image_center_x) / image_center_x * 30.0
-
-                hazards.append({
-                    'type': det['class'],
-                    'distance': estimated_distance,
-                    'angle': angle_deg,
-                    'score': det['score'],
-                    'source': 'hailo'
-                })
-
-        if hazards:
-            msg = String()
-            msg.data = json.dumps({'hazards': hazards})
-            self.hazards_publisher.publish(msg)
 
     def _draw_annotations(self, cv_image: np.ndarray, detections: list) -> np.ndarray:
         """Draw bounding boxes and labels on image.
