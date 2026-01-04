@@ -51,7 +51,8 @@ services:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - YOLO_LOGGING=${YOLO_LOGGING:-false}
-      - USE_HAILO=${USE_HAILO:-false}
+      # Default to Hailo when camera available (bridge handles server absence gracefully)
+      - USE_HAILO=${USE_HAILO:-true}
 
     command: >
       bash -c "

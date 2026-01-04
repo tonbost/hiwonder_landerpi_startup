@@ -103,13 +103,11 @@ def generate_launch_description():
         description='Enable sensor bridge for low-latency topic reading via JSON files'
     )
 
-    # Auto-detect Hailo availability
-    hailo_model_path = Path.home() / 'landerpi/hailo/models/yolov11n.hef'
-    hailo_available = hailo_model_path.exists()
-
+    # Hailo is available when camera is available (server runs on host via systemd)
+    # The bridge handles connection failures gracefully
     use_hailo_arg = DeclareLaunchArgument(
         'use_hailo',
-        default_value='true' if hailo_available else 'false',
+        default_value='true' if camera_available else 'false',
         description='Use Hailo-8 accelerated YOLO (25-40 FPS vs 2-5 FPS on CPU)'
     )
 
