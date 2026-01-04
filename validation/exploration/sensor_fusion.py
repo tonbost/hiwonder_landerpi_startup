@@ -134,13 +134,19 @@ class SensorFusion:
 
         # Check for immediate threats using semantic_stop_distance (0.8m for people/pets/bottles)
         for h in hazards:
-            if h["distance"] < self.config.semantic_stop_distance:
+            dist = h.get("distance", float('inf'))
+            htype = h.get("type", "unknown")
+            # Log all hazards detected (for debugging)
+            if dist < 2.0:  # Only log close hazards to avoid spam
+                console.print(f"{ts()} [cyan]YOLO: {htype} at {dist:.2f}m (threshold: {self.config.semantic_stop_distance}m)[/cyan]")
+
+            if dist < self.config.semantic_stop_distance:
                 self.state.semantic_hazard = True
-                self.state.hazard_type = h["type"]
+                self.state.hazard_type = htype
                 # Override closest distance if this is closer
-                if h["distance"] < self.state.closest_distance:
-                    self.state.closest_distance = h["distance"]
-                console.print(f"{ts()} [red]HAZARD: {h['type']} at {h['distance']:.2f}m - STOPPING[/red]")
+                if dist < self.state.closest_distance:
+                    self.state.closest_distance = dist
+                console.print(f"{ts()} [red]HAZARD: {htype} at {dist:.2f}m - STOPPING[/red]")
                 return
 
         self.state.semantic_hazard = False

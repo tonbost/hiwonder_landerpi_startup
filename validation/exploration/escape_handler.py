@@ -32,7 +32,7 @@ class EscapeLevel(Enum):
 class EscapeConfig:
     """Escape handler configuration."""
     # Timing
-    cooldown_seconds: float = 15.0  # Don't re-escalate for this long after success
+    cooldown_seconds: float = 5.0  # Don't re-escalate for this long after success
     level_timeout: float = 3.0  # Time before escalating to next level
 
     # Level 1: Wide turn - BACKUP FIRST then turn
