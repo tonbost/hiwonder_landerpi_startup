@@ -33,6 +33,13 @@ uv run python setup_landerpi.py deploy --host <IP> --user <USER> --reset
 # Skip Docker/ROS2 installation
 uv run python setup_landerpi.py deploy --host <IP> --user <USER> --skip-docker
 
+# Migrate SD card to NVMe drive (faster boot and I/O)
+uv run python migrate_to_nvme.py status              # Check NVMe readiness and current state
+uv run python migrate_to_nvme.py clone --yes         # Install rpi-clone and clone SD to NVMe
+uv run python migrate_to_nvme.py configure --yes     # Set boot order and enable PCIe Gen 3
+uv run python migrate_to_nvme.py verify              # Verify NVMe boot after reboot
+uv run python migrate_to_nvme.py update-eeprom --yes # Update bootloader firmware (optional)
+
 # Test chassis motion - DIRECT (no ROS2 needed, uses config.json)
 uv run python validation/test_chassis_direct.py test --direction all --duration 2 --yes  # Full test (6 directions)
 uv run python validation/test_chassis_direct.py test --duration 3 --yes  # Forward + backward only
@@ -160,6 +167,20 @@ uv run python deploy_voicecontroller.py test     # Run check on robot
 - `RemoteSetupManager` class handles SSH connections via Fabric
 - State tracking: Creates marker files in `~/.landerpi_setup/` on remote Pi
 - `is_step_done()`/`mark_step_done()` enable idempotent, resumable deployments
+
+**`migrate_to_nvme.py`** - SD to NVMe migration tool
+- Automates cloning SD card to NVMe for faster boot and I/O
+- Uses `rpi-clone` for safe filesystem cloning
+- Configures bootloader (BOOT_ORDER=0xf416, PCIE_PROBE=1) for NVMe boot priority
+- Enables PCIe Gen 3 in `/boot/firmware/config.txt` for maximum NVMe speed
+- Commands:
+  - `status` - Check NVMe detection, boot device, space requirements
+  - `clone` - Install rpi-clone and clone SD to NVMe
+  - `configure` - Set boot order and enable PCIe Gen 3
+  - `verify` - Verify NVMe boot with speed test
+  - `update-eeprom` - Update bootloader firmware to latest version
+- BOOT_ORDER codes: 6=NVMe, 1=SD, 4=USB, f=Loop (read right-to-left)
+- Typical workflow: `status` → `clone` → `configure` → reboot → `verify`
 
 **`validation/test_chassis_direct.py`** - Direct chassis motion test (NO ROS2 REQUIRED)
 - Uses `ros_robot_controller_sdk.py` for direct serial communication with STM32
