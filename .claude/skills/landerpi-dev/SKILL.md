@@ -26,6 +26,8 @@ hiwonderSetup/
 ├── docker/                # Docker Compose for ROS2 stack
 ├── config/                # Robot configuration files
 ├── drivers/               # SDK and driver files
+├── whisplay/              # Whisplay HAT driver files
+│   └── install_wm8960_ubuntu.sh  # Ubuntu-compatible WM8960 installer
 └── .claude/skills/        # LanderPi-specific skills
 ```
 
@@ -1121,6 +1123,77 @@ ROS2Config(
 | Topic read latency | 400-500ms | 5-10ms |
 | Control loop rate | ~2-3Hz | 10Hz |
 | Obstacle reaction | >1s | <200ms |
+
+## Whisplay HAT Integration
+
+The Whisplay HAT (PiSugar) provides LCD screen, physical buttons, LED indicators, and audio functions via WM8960 codec.
+
+### Hardware Components
+
+| Component | Interface | Description |
+|-----------|-----------|-------------|
+| LCD Screen | SPI | Display for status/UI |
+| Physical Buttons | GPIO | User input |
+| RGB LEDs | GPIO | Status indicators |
+| WM8960 Codec | I2S/I2C | Audio input/output |
+
+### Deployment Script
+
+`deploy_whisplay.py` follows standard CLI patterns:
+
+```bash
+uv run python deploy_whisplay.py check      # Check HAT status
+uv run python deploy_whisplay.py install    # Install WM8960 driver
+uv run python deploy_whisplay.py test       # LCD/button/LED test
+uv run python deploy_whisplay.py mic-test   # Microphone/speaker test
+uv run python deploy_whisplay.py status     # Detailed audio status
+uv run python deploy_whisplay.py uninstall  # Remove driver
+```
+
+### Ubuntu Compatibility
+
+The upstream Whisplay driver requires `raspi-config` (Raspberry Pi OS only). For Ubuntu:
+
+1. Custom installer `whisplay/install_wm8960_ubuntu.sh` bypasses raspi-config
+2. Uses `$SUDO_USER` to find correct home directory when running as root
+3. Manually configures `/boot/firmware/config.txt` for I2S/I2C overlays
+
+### Installation Steps
+
+The `deploy_whisplay.py install` command performs:
+1. Install prerequisites (git, i2c-tools, swig, liblgpio-dev)
+2. Clone Whisplay repository from GitHub
+3. Upload Ubuntu-compatible installer (bypasses raspi-config)
+4. Install WM8960 kernel driver and configure device tree overlays
+5. Install Python dependencies: `pillow`, `pygame`, `spidev`, `rpi-lgpio`
+6. Fix test scripts for Ubuntu (use `python3` instead of `python`)
+
+**Note:** `rpi-lgpio` is used instead of `RPi.GPIO` because the latter doesn't work on Ubuntu 25.10+ (cannot determine SOC peripheral base address).
+
+**Requires reboot** after installation to load kernel modules.
+
+### WM8960 Audio Driver Details
+
+The driver installation:
+1. Adds kernel modules to `/etc/modules`: `i2c-dev`, `snd-soc-wm8960`, `snd-soc-wm8960-soundcard`
+2. Configures device tree overlays in `/boot/firmware/config.txt`
+3. Installs ALSA config files to `/etc/wm8960-soundcard/`
+4. Enables `wm8960-soundcard.service` systemd service
+
+### Audio Device Detection
+
+After installation, verify with:
+```bash
+# Check I2C (WM8960 at 0x1a)
+i2cdetect -y 1
+
+# Check audio devices
+aplay -l    # Should show wm8960
+arecord -l  # Should show wm8960
+
+# Check kernel module
+lsmod | grep snd_soc_wm8960
+```
 
 ## Resources
 

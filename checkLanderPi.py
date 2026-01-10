@@ -6,7 +6,9 @@ Remotely diagnoses a Raspberry Pi 5 robot to verify all peripherals
 and system components are functioning correctly.
 """
 
+import json
 import sys
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -20,6 +22,36 @@ from invoke.exceptions import UnexpectedExit
 
 app = typer.Typer(help="HiWonder LanderPi Health Check Tool")
 console = Console()
+
+
+def get_config() -> dict:
+    """Load connection config from config.json."""
+    config_path = Path(__file__).parent / "config.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            return json.load(f)
+    return {}
+
+
+def get_connection_params(
+    host: Optional[str],
+    user: Optional[str],
+    password: Optional[str]
+) -> tuple[str, str, Optional[str]]:
+    """Get connection parameters from args or config.json."""
+    config = get_config()
+    host = host or config.get("host")
+    user = user or config.get("user")
+    password = password or config.get("password")
+
+    if not host:
+        console.print("[red]Missing host. Use --host or add to config.json[/red]")
+        raise typer.Exit(1)
+    if not user:
+        console.print("[red]Missing user. Use --user or add to config.json[/red]")
+        raise typer.Exit(1)
+
+    return host, user, password
 
 
 @dataclass
@@ -536,14 +568,15 @@ class LanderPiChecker:
 
 @app.command()
 def check(
-    host: str = typer.Option(..., help="Raspberry Pi IP address"),
-    user: str = typer.Option("pi", help="SSH Username"),
-    password: Optional[str] = typer.Option(None, help="SSH Password"),
+    host: Optional[str] = typer.Option(None, help="Raspberry Pi IP address (or use config.json)"),
+    user: Optional[str] = typer.Option(None, help="SSH Username (or use config.json)"),
+    password: Optional[str] = typer.Option(None, help="SSH Password (or use config.json)"),
     key_path: Optional[str] = typer.Option(None, help="Path to SSH private key"),
 ):
     """Run a comprehensive health check on the LanderPi robot."""
     console.print(Panel.fit("LanderPi Health Check", style="bold magenta"))
 
+    host, user, password = get_connection_params(host, user, password)
     checker = LanderPiChecker(host, user, password, key_path)
 
     if not checker.check_connection():
@@ -564,14 +597,15 @@ def check(
 
 @app.command()
 def quick(
-    host: str = typer.Option(..., help="Raspberry Pi IP address"),
-    user: str = typer.Option("pi", help="SSH Username"),
-    password: Optional[str] = typer.Option(None, help="SSH Password"),
+    host: Optional[str] = typer.Option(None, help="Raspberry Pi IP address (or use config.json)"),
+    user: Optional[str] = typer.Option(None, help="SSH Username (or use config.json)"),
+    password: Optional[str] = typer.Option(None, help="SSH Password (or use config.json)"),
     key_path: Optional[str] = typer.Option(None, help="Path to SSH private key"),
 ):
     """Run a quick connectivity and basic system check."""
     console.print(Panel.fit("LanderPi Quick Check", style="bold cyan"))
 
+    host, user, password = get_connection_params(host, user, password)
     checker = LanderPiChecker(host, user, password, key_path)
 
     if not checker.check_connection():

@@ -10,7 +10,9 @@ This script automates:
 """
 
 import json
+import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -25,6 +27,47 @@ from invoke.exceptions import UnexpectedExit
 
 app = typer.Typer(help="Migrate LanderPi from SD card to NVMe drive")
 console = Console()
+
+# Logger instance (configured by setup_logging)
+logger: logging.Logger = None
+
+
+def setup_logging() -> logging.Logger:
+    """Setup logging to logs/landerpi/nvme_migration.log."""
+    global logger
+    if logger is not None:
+        return logger
+
+    # Create log directory in project root
+    project_root = Path(__file__).parent
+    log_dir = project_root / "logs" / "landerpi"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "nvme_migration.log"
+
+    # Configure logger
+    logger = logging.getLogger("nvme_migration")
+    logger.setLevel(logging.DEBUG)
+
+    # File handler with detailed format
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Only add handler if not already added
+    if not logger.handlers:
+        logger.addHandler(file_handler)
+
+    # Log session start
+    logger.info("=" * 60)
+    logger.info(f"NVMe Migration Session Started")
+    logger.info("=" * 60)
+
+    return logger
 
 
 @dataclass
@@ -71,23 +114,45 @@ def get_connection(host: Optional[str], user: Optional[str], password: Optional[
 
 def run_cmd(conn: Connection, command: str, warn: bool = True) -> tuple[bool, str, str]:
     """Run a command and return (success, stdout, stderr)."""
+    if logger:
+        logger.debug(f"CMD: {command}")
     try:
         result = conn.run(command, hide=True, warn=warn)
+        if logger:
+            if result.ok:
+                logger.debug(f"  -> OK: {result.stdout.strip()[:200]}")
+            else:
+                logger.warning(f"  -> FAILED: {result.stderr.strip()[:200]}")
         return result.ok, result.stdout.strip(), result.stderr.strip()
     except UnexpectedExit as e:
+        if logger:
+            logger.error(f"  -> EXCEPTION: {e}")
         return False, "", str(e)
     except Exception as e:
+        if logger:
+            logger.error(f"  -> EXCEPTION: {e}")
         return False, "", str(e)
 
 
 def run_sudo(conn: Connection, command: str, password: str, warn: bool = True) -> tuple[bool, str, str]:
     """Run a sudo command and return (success, stdout, stderr)."""
+    if logger:
+        logger.debug(f"SUDO: {command}")
     try:
         result = conn.sudo(command, hide=True, warn=warn, pty=True, password=password)
+        if logger:
+            if result.ok:
+                logger.debug(f"  -> OK: {result.stdout.strip()[:200]}")
+            else:
+                logger.warning(f"  -> FAILED: {result.stderr.strip()[:200]}")
         return result.ok, result.stdout.strip(), result.stderr.strip()
     except UnexpectedExit as e:
+        if logger:
+            logger.error(f"  -> EXCEPTION: {e}")
         return False, "", str(e)
     except Exception as e:
+        if logger:
+            logger.error(f"  -> EXCEPTION: {e}")
         return False, "", str(e)
 
 
@@ -241,17 +306,24 @@ def status(
     password: str = typer.Option(None, help="SSH password"),
 ):
     """Check NVMe migration status and readiness."""
+    setup_logging()
+    logger.info(f"Command: status")
+
     conn, host, user, password = get_connection(host, user, password)
+    logger.info(f"Connecting to {user}@{host}")
 
     console.print(Panel(f"Checking NVMe status on {user}@{host}", title="NVMe Status"))
 
     try:
         conn.run("echo connected", hide=True)
+        logger.info("SSH connection successful")
     except Exception as e:
+        logger.error(f"Connection failed: {e}")
         console.print(f"[red]Connection failed: {e}[/red]")
         raise typer.Exit(1)
 
     nvme_status = gather_nvme_status(conn, password)
+    logger.info(f"NVMe detected: {nvme_status.nvme_detected}, Boot device: {nvme_status.boot_device}")
     display_status(nvme_status)
 
 
@@ -263,23 +335,32 @@ def clone(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts"),
 ):
     """Clone SD card to NVMe drive using rpi-clone."""
+    setup_logging()
+    logger.info(f"Command: clone")
+
     conn, host, user, password = get_connection(host, user, password)
+    logger.info(f"Connecting to {user}@{host}")
 
     console.print(Panel(f"Cloning SD to NVMe on {user}@{host}", title="NVMe Clone"))
 
     # Gather status
     nvme_status = gather_nvme_status(conn, password)
+    logger.info(f"Pre-flight: NVMe={nvme_status.nvme_detected}, Model={nvme_status.nvme_model}, Size={nvme_status.nvme_size_gb:.1f}GB")
+    logger.info(f"Pre-flight: SD used={nvme_status.sd_used_gb:.1f}GB, Boot={nvme_status.boot_device}")
 
     # Pre-flight checks
     if not nvme_status.nvme_detected:
+        logger.error("NVMe drive not detected")
         console.print("[red]✗ NVMe drive not detected. Cannot proceed.[/red]")
         raise typer.Exit(1)
 
     if nvme_status.booting_from_nvme:
+        logger.info("Already booting from NVMe, clone not needed")
         console.print("[yellow]Already booting from NVMe. Clone not needed.[/yellow]")
         raise typer.Exit(0)
 
     if nvme_status.nvme_size_gb < nvme_status.sd_used_gb * 1.1:
+        logger.error(f"NVMe too small: need {nvme_status.sd_used_gb * 1.1:.1f}GB, have {nvme_status.nvme_size_gb:.1f}GB")
         console.print(f"[red]✗ NVMe too small. Need {nvme_status.sd_used_gb * 1.1:.1f} GB, have {nvme_status.nvme_size_gb:.1f} GB[/red]")
         raise typer.Exit(1)
 
@@ -291,11 +372,15 @@ def clone(
 
     if not yes:
         if not typer.confirm("Proceed with clone?"):
+            logger.info("Clone aborted by user")
             console.print("Aborted.")
             raise typer.Exit(0)
 
+    logger.info("Starting clone process")
+
     # Install rpi-clone if needed
     if not nvme_status.rpi_clone_installed:
+        logger.info("Installing rpi-clone")
         console.print("\n[bold]Installing rpi-clone...[/bold]")
 
         # Clone rpi-clone repo
@@ -335,6 +420,7 @@ udevadm trigger
     console.print("[green]✓ udev rules installed[/green]")
 
     # Run rpi-clone
+    logger.info("Running rpi-clone nvme0n1 -f -U")
     console.print("\n[bold]Starting clone process...[/bold]")
     console.print("[dim]This may take 10-30 minutes depending on data size.[/dim]")
     console.print("[dim]The clone will partition and sync all data to NVMe.[/dim]\n")
@@ -353,11 +439,14 @@ udevadm trigger
             timeout=3600  # 1 hour timeout
         )
         if result.ok:
+            logger.info("Clone completed successfully")
             console.print("\n[green]✓ Clone completed successfully![/green]")
         else:
+            logger.error("Clone may have failed")
             console.print(f"\n[red]Clone may have failed. Check output above.[/red]")
             raise typer.Exit(1)
     except Exception as e:
+        logger.error(f"Clone error: {e}")
         console.print(f"\n[red]Clone error: {e}[/red]")
         raise typer.Exit(1)
 
@@ -376,13 +465,19 @@ def configure(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts"),
 ):
     """Configure bootloader for NVMe boot and enable PCIe Gen 3."""
+    setup_logging()
+    logger.info(f"Command: configure (pcie_gen3={pcie_gen3})")
+
     conn, host, user, password = get_connection(host, user, password)
+    logger.info(f"Connecting to {user}@{host}")
 
     console.print(Panel(f"Configuring NVMe boot on {user}@{host}", title="NVMe Configure"))
 
     nvme_status = gather_nvme_status(conn, password)
+    logger.info(f"Current state: NVMe={nvme_status.nvme_detected}, boot_order={nvme_status.boot_order}, pcie_gen3={nvme_status.pcie_gen3_enabled}")
 
     if not nvme_status.nvme_detected:
+        logger.error("NVMe drive not detected")
         console.print("[red]✗ NVMe drive not detected.[/red]")
         raise typer.Exit(1)
 
@@ -399,25 +494,30 @@ def configure(
         changes.append("Enable PCIe Gen 3 in config.txt")
 
     if not changes:
+        logger.info("All configurations already applied")
         console.print("[green]✓ All configurations already applied![/green]")
         raise typer.Exit(0)
 
+    logger.info(f"Changes to apply: {changes}")
     console.print("\n[bold]Changes to apply:[/bold]")
     for change in changes:
         console.print(f"  • {change}")
 
     if not yes:
         if not typer.confirm("\nApply these changes?"):
+            logger.info("Configuration aborted by user")
             console.print("Aborted.")
             raise typer.Exit(0)
 
     # Update bootloader config
     if "6" not in nvme_status.boot_order[:2] or not nvme_status.pcie_probe_enabled:
+        logger.info("Updating bootloader configuration")
         console.print("\n[bold]Updating bootloader configuration...[/bold]")
 
         # Extract current config
         ok, _, err = run_cmd(conn, "vcgencmd bootloader_config > ~/bootconf.txt")
         if not ok:
+            logger.error(f"Failed to extract bootloader config: {err}")
             console.print(f"[red]Failed to extract bootloader config: {err}[/red]")
             raise typer.Exit(1)
 
@@ -435,17 +535,30 @@ def configure(
         # Apply the config
         ok, out, err = run_sudo(conn, "rpi-eeprom-config --apply ~/bootconf.txt", password)
         if not ok:
+            logger.error(f"Failed to apply bootloader config: {err}")
             console.print(f"[red]Failed to apply bootloader config: {err}[/red]")
             console.print("[yellow]Try running: sudo rpi-eeprom-config --edit[/yellow]")
             raise typer.Exit(1)
 
+        logger.info("Bootloader configuration updated (BOOT_ORDER=0xf416, PCIE_PROBE=1)")
         console.print("[green]✓ Bootloader configuration updated[/green]")
 
     # Enable PCIe Gen 3
     if pcie_gen3 and not nvme_status.pcie_gen3_enabled:
+        logger.info("Enabling PCIe Gen 3")
         console.print("\n[bold]Enabling PCIe Gen 3...[/bold]")
 
-        # Check if line already exists
+        # Need both dtparam=pciex1 and dtparam=pciex1_gen=3
+        # First, ensure dtparam=pciex1 is present
+        ok, out, _ = run_cmd(conn, "grep -q '^dtparam=pciex1$' /boot/firmware/config.txt && echo exists")
+        if "exists" not in out:
+            ok, _, err = run_sudo(conn, "bash -c 'echo \"dtparam=pciex1\" >> /boot/firmware/config.txt'", password)
+            if ok:
+                logger.info("Added dtparam=pciex1")
+            else:
+                logger.warning(f"Could not add dtparam=pciex1: {err}")
+
+        # Then add or update dtparam=pciex1_gen=3
         ok, out, _ = run_cmd(conn, "grep -q 'pciex1_gen=' /boot/firmware/config.txt && echo exists")
 
         if "exists" in out:
@@ -453,13 +566,16 @@ def configure(
             ok, _, err = run_sudo(conn, "sed -i 's/^dtparam=pciex1_gen=.*/dtparam=pciex1_gen=3/' /boot/firmware/config.txt", password)
         else:
             # Add new line
-            ok, _, err = run_sudo(conn, "bash -c 'echo \"\\n# Enable PCIe Gen 3 speeds\\ndtparam=pciex1_gen=3\" >> /boot/firmware/config.txt'", password)
+            ok, _, err = run_sudo(conn, "bash -c 'echo \"dtparam=pciex1_gen=3\" >> /boot/firmware/config.txt'", password)
 
         if ok:
+            logger.info("PCIe Gen 3 enabled in /boot/firmware/config.txt")
             console.print("[green]✓ PCIe Gen 3 enabled[/green]")
         else:
+            logger.warning(f"Could not enable PCIe Gen 3: {err}")
             console.print(f"[yellow]Warning: Could not enable PCIe Gen 3: {err}[/yellow]")
 
+    logger.info("Configuration complete - reboot required")
     console.print("\n[bold green]Configuration complete![/bold green]")
     console.print("\n[bold]Next steps:[/bold]")
     console.print("  1. Reboot: [cyan]sudo reboot[/cyan]")
@@ -473,18 +589,25 @@ def verify(
     password: str = typer.Option(None, help="SSH password"),
 ):
     """Verify system is booting from NVMe with optimal settings."""
+    setup_logging()
+    logger.info(f"Command: verify")
+
     conn, host, user, password = get_connection(host, user, password)
+    logger.info(f"Connecting to {user}@{host}")
 
     console.print(Panel(f"Verifying NVMe boot on {user}@{host}", title="NVMe Verify"))
 
     nvme_status = gather_nvme_status(conn, password)
+    logger.info(f"Verify: boot_device={nvme_status.boot_device}, pcie_gen3={nvme_status.pcie_gen3_enabled}, boot_order={nvme_status.boot_order}")
 
     all_ok = True
 
     # Check boot device
     if nvme_status.booting_from_nvme:
+        logger.info(f"Booting from NVMe: {nvme_status.boot_device}")
         console.print(f"[green]✓ Booting from NVMe[/green] ({nvme_status.boot_device})")
     else:
+        logger.warning(f"NOT booting from NVMe: {nvme_status.boot_device}")
         console.print(f"[red]✗ NOT booting from NVMe[/red] (current: {nvme_status.boot_device})")
         all_ok = False
 
@@ -524,9 +647,11 @@ def verify(
 
     # Summary
     if all_ok:
+        logger.info("NVMe migration verified successfully")
         console.print("\n[bold green]✓ NVMe migration verified successfully![/bold green]")
         console.print("\nYour Pi is now booting from NVMe. The SD card can be removed or kept as backup.")
     else:
+        logger.warning("NVMe migration incomplete")
         console.print("\n[bold red]✗ NVMe migration incomplete[/bold red]")
         console.print("\nRun 'configure' and reboot to complete the migration.")
 
@@ -539,7 +664,11 @@ def update_eeprom(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts"),
 ):
     """Update bootloader EEPROM to latest version."""
+    setup_logging()
+    logger.info(f"Command: update_eeprom")
+
     conn, host, user, password = get_connection(host, user, password)
+    logger.info(f"Connecting to {user}@{host}")
 
     console.print(Panel(f"Updating EEPROM on {user}@{host}", title="EEPROM Update"))
 
@@ -549,22 +678,29 @@ def update_eeprom(
     console.print(out)
 
     if "UPDATE AVAILABLE" not in out:
+        logger.info("EEPROM is up to date")
         console.print("\n[green]✓ EEPROM is up to date[/green]")
         return
 
+    logger.info("EEPROM update available")
+
     if not yes:
         if not typer.confirm("\nApply EEPROM update? (requires reboot)"):
+            logger.info("EEPROM update aborted by user")
             console.print("Aborted.")
             raise typer.Exit(0)
 
     # Apply update
+    logger.info("Applying EEPROM update")
     console.print("\n[bold]Applying EEPROM update...[/bold]")
     ok, out, err = run_sudo(conn, "rpi-eeprom-update -a", password)
     if ok:
+        logger.info("EEPROM update applied successfully - reboot required")
         console.print("[green]✓ EEPROM update applied[/green]")
         console.print("\n[yellow]Reboot required to complete update:[/yellow]")
         console.print("  [cyan]sudo reboot[/cyan]")
     else:
+        logger.error(f"Failed to apply EEPROM update: {err}")
         console.print(f"[red]Failed to apply EEPROM update: {err}[/red]")
         raise typer.Exit(1)
 

@@ -39,6 +39,11 @@ Load credentials from `config.json` in the project root:
 | Hailo Deploy | `uv run python deploy_hailo8.py deploy` | Upload models and ROS2 node |
 | Hailo Test | `uv run python deploy_hailo8.py test` | Run validation test |
 | Hailo Status | `uv run python deploy_hailo8.py status` | Show device info |
+| Whisplay Check | `uv run python deploy_whisplay.py check` | Check Whisplay HAT status |
+| Whisplay Install | `uv run python deploy_whisplay.py install` | Install WM8960 audio driver |
+| Whisplay Test | `uv run python deploy_whisplay.py test` | LCD/button/LED test |
+| Whisplay Mic Test | `uv run python deploy_whisplay.py mic-test` | Microphone/speaker test |
+| Whisplay Status | `uv run python deploy_whisplay.py status` | Detailed audio status |
 
 All tools read credentials from `config.json` automatically.
 
@@ -248,3 +253,43 @@ if time.time() - self._last_hazard_time < 0.5:
 ```
 
 See `landerpi-dev` skill for detailed caching patterns.
+
+## Whisplay HAT (Audio/LCD)
+
+The Whisplay HAT (PiSugar) provides audio I/O, LCD display, buttons, and LEDs via GPIO.
+
+### Hardware Overview
+
+| Component | Interface | I2C Address |
+|-----------|-----------|-------------|
+| WM8960 Audio Codec | I2S/I2C | 0x1a |
+| LCD Screen | SPI | - |
+| RGB LEDs | GPIO | - |
+| Physical Buttons | GPIO | - |
+
+### Expected State After Installation
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| I2C device | `i2cdetect -y 1` | `1a` visible |
+| Audio playback | `aplay -l` | `wm8960` card |
+| Audio capture | `arecord -l` | `wm8960` card |
+| Kernel module | `lsmod \| grep snd_soc_wm8960` | Module loaded |
+| SPI (LCD) | `ls /dev/spidev*` | `/dev/spidev0.0` |
+
+### Installation Notes
+
+- **Requires reboot** after `deploy_whisplay.py install` to load kernel modules
+- Uses custom Ubuntu installer (`whisplay/install_wm8960_ubuntu.sh`) since upstream requires raspi-config
+- Device tree overlays added to `/boot/firmware/config.txt`: `dtoverlay=wm8960-soundcard`, `dtoverlay=i2s-mmap`
+
+### Troubleshooting
+
+**Problem: WM8960 not detected at 0x1a**
+- Check HAT is physically connected
+- Verify I2C enabled: `ls /dev/i2c*` should show `/dev/i2c-1`
+
+**Problem: No audio devices after reboot**
+- Check kernel module: `lsmod | grep snd_soc_wm8960`
+- Check service: `systemctl status wm8960-soundcard.service`
+- Check config.txt overlays: `grep wm8960 /boot/firmware/config.txt`
